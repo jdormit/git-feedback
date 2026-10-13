@@ -51,3 +51,10 @@ test("argument errors are reported", async () => {
   await expect(gur(["comment", "--path", "a.txt"])).rejects.toThrow(/--body/)
   await expect(gur(["frobnicate"])).rejects.toThrow(/Unknown command/)
 })
+
+test("start keeps revisions before a -- path separator", async () => {
+  const a = (await gur(["start", "--json", "HEAD", "--", "a.txt"])).json()
+  expect(a.target.spec).toEqual(["HEAD", "--", "a.txt"])
+  const b = (await gur(["start", "--json", "--new", "--", "HEAD", "--", "a.txt"])).json()
+  expect(b.target.spec).toEqual(["HEAD", "--", "a.txt"])
+})

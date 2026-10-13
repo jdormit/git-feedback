@@ -203,3 +203,36 @@ describe("ReviewStore", () => {
     }
   })
 })
+
+describe("review fixes", () => {
+  test("a comment made against an older revision is moved onto the latest one", () => {
+    repo.write("src/a.txt", lines(30).replace("line 20\n", "line 20 changed\n"))
+    const { review } = startReview(store, repo.dir, { spec: ["HEAD"] })
+    repo.write("src/a.txt", lines(30).replace("line 2\n", "line 2\nextra\n").replace("line 20\n", "line 20 changed\n"))
+    refreshReview(store, review.id)
+    const { thread } = addThread(store, review.id, { location: { path: "src/a.txt", line: 10 }, revision: 1, body: "x", author: me })
+    expect(thread.anchor).toMatchObject({ revision: 1, line: 10 })
+    expect(thread).toMatchObject({ outdated: false, position: { revision: 2, line: 11 } })
+    const gone = addThread(store, review.id, { location: { path: "src/a.txt", line: 2 }, revision: 1, body: "x", author: me }).thread
+    expect(gone.outdated).toBe(false)
+    const changed = addThread(store, review.id, { location: { path: "src/a.txt", side: "old", line: 20 }, revision: 1, body: "x", author: me }).thread
+    expect(changed.position).toMatchObject({ revision: 2, line: 20 })
+  })
+
+  test("refreshing without changes does not rewrite the review", () => {
+    const { review } = startReview(store, repo.dir, { spec: ["HEAD"] })
+    const before = store.load(review.id).updatedAt
+    Bun.sleepSync(5)
+    refreshReview(store, review.id)
+    expect(store.load(review.id).updatedAt).toBe(before)
+  })
+
+  test("unreadable review files are skipped by list and can still be removed", () => {
+    const { review } = startReview(store, repo.dir, { spec: ["HEAD"] })
+    Bun.write(store.path("zz"), JSON.stringify({ schemaVersion: 99, id: "zz" }))
+    expect(store.list().map((r) => r.id)).toEqual([review.id])
+    expect(store.select().id).toBe(review.id)
+    deleteReview(store, "zz")
+    expect(existsSync(store.path("zz"))).toBe(false)
+  })
+})

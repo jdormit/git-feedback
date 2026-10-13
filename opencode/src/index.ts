@@ -64,9 +64,14 @@ export const ReviewPlugin: Plugin = async (_input, options) => {
         },
         async execute(args, ctx) {
           return withStore(ctx.directory, (store, toplevel) => {
-            const id = store.select(args.review, toplevel).id
-            const review = refreshReview(store, id).review
-            return formatReview(review, { includeResolved: args.include_resolved })
+            let review = store.select(args.review, toplevel)
+            let warning = ""
+            try {
+              review = refreshReview(store, review.id).review
+            } catch (e) {
+              warning = `Warning: could not re-anchor to the current code (${(e as Error).message}).\n\n`
+            }
+            return warning + formatReview(review, { includeResolved: args.include_resolved })
           })
         },
       }),

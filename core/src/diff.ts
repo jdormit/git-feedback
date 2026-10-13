@@ -72,11 +72,16 @@ export function changedPaths(cwd: string, from: string, to: string): Map<string,
   return result
 }
 
-/** Whether LINE on SIDE falls inside one of the (context-including) HUNKS. */
-export function lineInHunks(hunks: Hunk[], side: Side, line: number): boolean {
+/** Whether lines FIRST through LAST on SIDE all fall inside a single one of HUNKS. */
+export function rangeInOneHunk(hunks: Hunk[], side: Side, first: number, last: number): boolean {
   return hunks.some((h) => {
     const start = side === "old" ? h.oldStart : h.newStart
     const count = side === "old" ? h.oldCount : h.newCount
-    return line >= start && line < start + count
+    return first >= start && last < start + count
   })
+}
+
+/** Whether LINE on SIDE falls inside one of the (context-including) HUNKS. */
+export function lineInHunks(hunks: Hunk[], side: Side, line: number): boolean {
+  return rangeInOneHunk(hunks, side, line, line)
 }

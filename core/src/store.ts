@@ -25,7 +25,14 @@ export class ReviewStore {
     if (!existsSync(this.dir)) return []
     return readdirSync(this.dir)
       .filter((f) => f.endsWith(".json"))
-      .map((f) => this.load(f.slice(0, -5)))
+      .flatMap((f) => {
+        try {
+          return [this.load(f.slice(0, -5))]
+        } catch (e) {
+          process.stderr.write(`gur: skipping ${f}: ${(e as Error).message}\n`)
+          return []
+        }
+      })
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   }
 
@@ -44,13 +51,16 @@ export class ReviewStore {
     this.withLock(review.id, () => this.write(review))
   }
 
-  /** Apply FN to the stored review under the lock and save it. */
+  /** Apply FN to the stored review under the lock, saving it if FN changed anything. */
   mutate<T>(id: string, fn: (review: Review) => T): T {
     return this.withLock(id, () => {
       const review = this.load(id)
+      const before = JSON.stringify(review)
       const result = fn(review)
-      review.updatedAt = new Date().toISOString()
-      this.write(review)
+      if (JSON.stringify(review) !== before) {
+        review.updatedAt = new Date().toISOString()
+        this.write(review)
+      }
       return result
     })
   }
@@ -67,6 +77,7 @@ export class ReviewStore {
     const wanted = idOrPrefix || process.env["GUR_REVIEW"]
     const all = this.list()
     if (wanted) {
+      if (existsSync(this.path(wanted))) return this.load(wanted)
       const matches = all.filter((r) => r.id.startsWith(wanted))
       if (matches.length === 1) return matches[0]!
       throw new Error(matches.length ? `Review id ${wanted} is ambiguous` : `No review with id ${wanted}`)

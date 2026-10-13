@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { parseArgs } from "node:util"
 import { formatReview, summarize } from "./format"
@@ -25,6 +25,7 @@ const USAGE = `usage: git-universal-review [-C <dir>] <command> [options]
 
 Reviews
   start [--title T] [--new] [--] [<git diff args>...]   start or resume a review of a diff
+                                                         (git diff options such as --cached go after --)
   list [--all]                                           list reviews (open only unless --all)
   show [--all] [--no-refresh]                            show threads (refreshes first)
   refresh                                                re-resolve the diff and move threads
@@ -127,7 +128,8 @@ export async function run(argv: string[], ctx: RunContext): Promise<number> {
 
   switch (command) {
     case "start": {
-      const spec = specSplit ? argv.slice(dashDash + 1) : rest
+      const afterDashDash = specSplit ? argv.slice(dashDash + 1) : []
+      const spec = rest.length && specSplit ? [...rest, "--", ...afterDashDash] : [...rest, ...afterDashDash]
       const { review, created } = startReview(store, cwd, { spec, title: values.title, reuse: !values.new })
       out(review, `${created ? "Started" : "Resumed"} review ${review.id}: ${review.title}`)
       return 0
@@ -168,9 +170,9 @@ export async function run(argv: string[], ctx: RunContext): Promise<number> {
       return 0
     }
     case "rm": {
-      const review = selected()
-      deleteReview(store, review.id)
-      out({ deleted: review.id }, `Deleted review ${review.id}.`)
+      const id = values.review && existsSync(store.path(values.review)) ? values.review : selected().id
+      deleteReview(store, id)
+      out({ deleted: id }, `Deleted review ${id}.`)
       return 0
     }
     case "comment": {

@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto"
-import { changedPaths, hunksBetween, lineInHunks, type Hunk } from "./diff"
+import { changedPaths, hunksBetween, rangeInOneHunk, type Hunk } from "./diff"
 import { git, gitTry, readLines } from "./git"
 import { latestRevision, refPrefix, refreshReview, startReview } from "./review"
 import type { ReviewStore } from "./store"
@@ -108,6 +108,12 @@ function fetchPr(cwd: string, id: string, link: GitHubLink, baseRef: string): vo
   )
 }
 
+function fetchMergeBase(cwd: string, id: string, link: GitHubLink, baseRef: string): string {
+  fetchPr(cwd, id, link, baseRef)
+  const refs = githubRefs(id)
+  return git(["merge-base", refs.base, refs.head], { cwd }).trim()
+}
+
 async function getPr(api: GitHubApi, link: Pick<GitHubLink, "repo" | "number">) {
   return (await api.request("GET", `/repos/${link.repo}/pulls/${link.number}`)) as {
     number: number
@@ -163,6 +169,7 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
         nodes {
           id isResolved isOutdated path line startLine originalLine originalStartLine diffSide startDiffSide subjectType
           comments(first: 100) {
+            totalCount
             nodes {
               databaseId url body createdAt diffHunk
               author { login __typename }
@@ -197,7 +204,7 @@ export interface RemoteThread {
   diffSide: "LEFT" | "RIGHT"
   startDiffSide: "LEFT" | "RIGHT" | null
   subjectType: "LINE" | "FILE"
-  comments: { nodes: RemoteComment[] }
+  comments: { totalCount?: number; nodes: RemoteComment[] }
 }
 
 export interface ConversationItem {
@@ -337,12 +344,14 @@ export function applyPull(review: Review, data: PullData): { added: number; plac
       thread.resolved = remote.isResolved
       gh.resolved = remote.isResolved
     }
-    mergeComments(review, thread, links, (c) => c.github!.kind === "review-comment")
+    const complete = (remote.comments.totalCount ?? 0) <= remote.comments.nodes.length
+    mergeComments(review, thread, links, (c) => complete && c.github!.kind === "review-comment")
   }
 
   for (const thread of review.threads) {
     if (thread.github?.kind !== "review-thread" || !thread.github.threadId || remoteThreadIds.has(thread.github.threadId)) continue
     thread.comments = thread.comments.filter((c) => !c.github)
+    delete thread.github
   }
   review.threads = review.threads.filter((t) => t.comments.length > 0)
 
@@ -393,7 +402,7 @@ export interface PullOptions {
 }
 
 export async function githubPull(store: ReviewStore, id: string, api: GitHubApi, opts: PullOptions = {}) {
-  let review = store.load(id)
+  const review = store.load(id)
   const link = linkOf(review)
   if (opts.fetch !== false) {
     const refs = githubRefs(id)
@@ -401,7 +410,7 @@ export async function githubPull(store: ReviewStore, id: string, api: GitHubApi,
       const pr = await getPr(api, link)
       fetchPr(review.target.worktree, id, link, pr.base.ref)
     }
-    review = refreshReview(store, id).review
+    refreshReview(store, id)
   }
   const data = await fetchPullData(api, link)
   return store.mutate(id, (r) => applyPull(r, data))
@@ -464,6 +473,7 @@ export async function githubPush(store: ReviewStore, id: string, api: GitHubApi,
   const latest = latestRevision(review)
   const result: PushResult = { reviewComments: 0, fileComments: 0, replies: 0, issueComments: 0, edits: 0, resolved: 0, skipped: [] }
 
+  let prMergeBase: string | undefined
   const fresh = review.threads.filter((t) => !t.github && t.anchor.kind !== "review" && t.comments[0] && !t.comments[0].github)
   const inline: PlannedComment[] = []
   const fileLevel: PlannedComment[] = []
@@ -477,6 +487,12 @@ export async function githubPush(store: ReviewStore, id: string, api: GitHubApi,
     if (latest.head !== pr.head.sha) {
       throw new Error(`Review is at ${latest.head.slice(0, 10)} but the PR head is ${pr.head.sha.slice(0, 10)}; run \`gur github pull\` first`)
     }
+    prMergeBase ??= fetchMergeBase(cwd, id, link, pr.base.ref)
+    if (latest.base !== prMergeBase) {
+      throw new Error(
+        `Review base ${latest.base.slice(0, 10)} is not the PR's merge base ${prMergeBase.slice(0, 10)}, so line numbers would not match GitHub's diff`,
+      )
+    }
     const first = t.comments[0]!
     const planned = { threadId: t.id, commentId: first.id, path: pos.path, body: first.body }
     if (pos.line === undefined) {
@@ -485,7 +501,7 @@ export async function githubPush(store: ReviewStore, id: string, api: GitHubApi,
     }
     const side = pos.side ?? "new"
     const hunks = prHunks(cwd, latest.base, latest.head, side, pos.path, paths)
-    const visible = lineInHunks(hunks, side, pos.line) && lineInHunks(hunks, side, pos.startLine ?? pos.line)
+    const visible = rangeInOneHunk(hunks, side, pos.startLine ?? pos.line, pos.line)
     if (!visible) {
       fileLevel.push({ ...planned, body: `**${lineLabel(pos.startLine, pos.line)}** (outside the diff):\n\n${first.body}` })
       continue

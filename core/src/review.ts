@@ -228,6 +228,12 @@ export function addThread(store: ReviewStore, id: string, opts: AddThreadOptions
         }
         thread.position = { revision: rev.n, path: loc.path, side, line: loc.line, ...range }
       }
+      const latest = latestRevision(review)
+      if (thread.position && rev.n !== latest.n) {
+        const moved = mapPosition(cwd, review, thread.position, latest, new Map())
+        if (moved) thread.position = moved
+        else thread.outdated = true
+      }
     }
     taken.add(thread.id)
     const comment: Comment = { id: newId(3, taken), author: opts.author, body, createdAt: now() }
@@ -282,15 +288,16 @@ export function setStatus(store: ReviewStore, id: string, status: Review["status
   })
 }
 
+/** Delete review ID and its refs. Works on files this version cannot read. */
 export function deleteReview(store: ReviewStore, id: string): void {
-  const review = store.load(id)
+  if (!/^[0-9a-zA-Z_-]+$/.test(id)) throw new Error(`Invalid review id: ${id}`)
   const cwd = store.repo.toplevel
-  const refs = gitTry(["for-each-ref", "--format=%(refname)", `${refPrefix(review.id)}/`], { cwd }) ?? ""
+  const refs = gitTry(["for-each-ref", "--format=%(refname)", `${refPrefix(id)}/`], { cwd }) ?? ""
   const input = refs
     .split("\n")
     .filter(Boolean)
     .map((ref) => `delete ${ref}\n`)
     .join("")
   if (input) git(["update-ref", "--stdin"], { cwd, input })
-  store.remove(review.id)
+  store.remove(id)
 }

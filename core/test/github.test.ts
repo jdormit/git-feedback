@@ -163,3 +163,42 @@ describe("githubPull", () => {
     expect(store.load(review.id).threads.map((t) => t.github?.kind)).toEqual(["conversation"])
   })
 })
+
+describe("github fixes", () => {
+  test("refuses to place comments when the review base is not the PR merge base", async () => {
+    const { review } = startReview(store, local, { spec: ["origin/main..origin/feature"] })
+    await githubLink(store, review.id, gh, pr)
+    addThread(store, review.id, { location: { path: "src/app.txt", line: 20 }, body: "x", author: me })
+    await expect(githubPush(store, review.id, gh, {})).rejects.toThrow(/merge base/)
+  })
+
+  test("a range spanning two hunks is posted as a file comment", async () => {
+    git(["checkout", "-q", "-b", "wide", "origin/feature"], { cwd: local })
+    const review = await githubStart(store, local, gh, pr)
+    addThread(store, review.id, { location: { path: "src/app.txt", line: 20, startLine: 2 }, body: "span", author: me })
+    const result = await githubPush(store, review.id, gh, {})
+    expect(result).toMatchObject({ reviewComments: 0, fileComments: 1 })
+  })
+
+  test("local replies on a thread deleted on GitHub become a new thread", async () => {
+    gh.addRemoteThread({ path: "src/app.txt", line: 20, body: "nice" })
+    const review = await githubStart(store, local, gh, pr)
+    reply(store, review.id, review.threads[0]!.id, "my reply", me)
+    gh.reviewComments = []
+    await githubPull(store, review.id, gh)
+    const thread = store.load(review.id).threads[0]!
+    expect(thread.github).toBeUndefined()
+    expect(thread.comments.map((c) => c.body)).toEqual(["my reply"])
+    const result = await githubPush(store, review.id, gh, {})
+    expect(result.reviewComments).toBe(1)
+  })
+
+  test("threads with more comments than one page are not pruned", async () => {
+    const root = gh.addRemoteThread({ path: "src/app.txt", line: 20, body: "nice" })
+    gh.addRemoteReply(root.id, "second")
+    const review = await githubStart(store, local, gh, pr)
+    gh.pageSize = 1
+    await githubPull(store, review.id, gh)
+    expect(store.load(review.id).threads[0]!.comments.map((c) => c.body)).toEqual(["nice", "second"])
+  })
+})

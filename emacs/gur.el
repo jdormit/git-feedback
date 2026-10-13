@@ -152,6 +152,8 @@ Call CALLBACK with the parsed JSON output on success."
          (merge-base (member "--merge-base" head))
          (revs (seq-remove (lambda (a) (string-prefix-p "-" a)) head))
          (args (car (magit-diff-arguments 'magit-diff-mode))))
+    (when (and merge-base (length< revs 2))
+      (user-error "Magit cannot show a --merge-base diff against the working tree"))
     (pcase-exhaustive revs
       ('()
        (magit-diff-setup-buffer nil (and cached "--cached") args files
@@ -174,6 +176,12 @@ Call CALLBACK with the parsed JSON output on success."
 (defvar-local gur--review-id nil
   "Id of the review attached to this buffer.")
 
+(defvar-local gur--shown-revision nil
+  "Number of the review revision whose code this buffer's diff shows.")
+
+(defvar-local gur--attached-spec nil
+  "What `gur--buffer-spec' returned when the review was attached.")
+
 (defvar-local gur--watch nil
   "File notification descriptor for the review's directory.")
 
@@ -190,6 +198,10 @@ Call CALLBACK with the parsed JSON output on success."
 (defun gur--latest-revision ()
   "Return the latest revision number of the review in this buffer."
   (plist-get (car (last (plist-get (plist-get gur--review :target) :revisions))) :n))
+
+(defun gur--revision ()
+  "Return the revision whose code the diff in this buffer shows."
+  (or gur--shown-revision (gur--latest-revision)))
 
 (defun gur--threads ()
   "Return the threads of the review in this buffer."
@@ -234,12 +246,14 @@ Call CALLBACK with the parsed JSON output on success."
   (if gur-mode
       (progn
         (add-hook 'magit-refresh-buffer-hook #'gur--after-refresh nil t)
-        (add-hook 'change-major-mode-hook #'gur--unwatch nil t))
+        (add-hook 'change-major-mode-hook #'gur--unwatch nil t)
+        (add-hook 'kill-buffer-hook #'gur--unwatch nil t))
     (remove-hook 'magit-refresh-buffer-hook #'gur--after-refresh t)
     (remove-hook 'change-major-mode-hook #'gur--unwatch t)
+    (remove-hook 'kill-buffer-hook #'gur--unwatch t)
     (gur--unwatch)
     (gur--clear-rendered)
-    (setq gur--review nil gur--review-id nil)))
+    (setq gur--review nil gur--review-id nil gur--shown-revision nil gur--attached-spec nil)))
 
 (defun gur--assert ()
   "Signal a user error unless this buffer shows a review."
@@ -249,8 +263,7 @@ Call CALLBACK with the parsed JSON output on success."
 (defun gur--after-refresh ()
   "Re-render the review after Magit refreshes the buffer."
   (when gur-mode
-    (if (equal (ignore-errors (gur--buffer-spec))
-               (plist-get (plist-get gur--review :target) :spec))
+    (if (equal (ignore-errors (gur--buffer-spec)) gur--attached-spec)
         (gur--render t)
       (gur-mode -1)
       (message "This buffer now shows a different diff; review detached"))))
@@ -295,7 +308,11 @@ Call CALLBACK with the parsed JSON output on success."
         (let ((review (ignore-errors (gur--call (append '("show" "--no-refresh") (gur--review-arg))))))
           (when (and review (not (equal (plist-get review :updatedAt)
                                         (plist-get gur--review :updatedAt))))
-            (gur--draw review)))))))
+            (if (equal (plist-get (car (last (plist-get (plist-get review :target) :revisions))) :n)
+                       gur--shown-revision)
+                (gur--draw review)
+              ;; The code moved on; redraw the diff, which renders the review again.
+              (magit-refresh-buffer))))))))
 
 ;;; Diff positions
 ;;
@@ -589,7 +606,7 @@ Magit refreshes the buffer after applying, which renders the review again."
   "Return the buffer position of THREAD's last anchored line, or nil."
   (let ((pos (plist-get thread :position)))
     (and (not (plist-get thread :outdated))
-         (equal (plist-get pos :revision) (gur--latest-revision))
+         (equal (plist-get pos :revision) (gur--revision))
          (plist-get pos :line)
          (gur--find-position (plist-get pos :path) (plist-get pos :side) (plist-get pos :line)))))
 
@@ -614,11 +631,17 @@ Magit refreshes the buffer after applying, which renders the review again."
   (force-mode-line-update))
 
 (defun gur--render (&optional refresh)
-  "Fetch the review and draw it.  With REFRESH, re-resolve its diff first."
+  "Fetch the review and draw it.
+With REFRESH, the buffer's diff was just recomputed: re-resolve the
+review's target so that its latest revision matches what is shown."
   (when (and gur-mode gur--review-id)
     (condition-case err
-        (gur--draw (gur--call (append (list "show") (unless refresh '("--no-refresh"))
-                                      (gur--review-arg))))
+        (let ((review (gur--call (append (list "show") (unless refresh '("--no-refresh"))
+                                         (gur--review-arg)))))
+          (when refresh
+            (setq gur--shown-revision
+                  (plist-get (car (last (plist-get (plist-get review :target) :revisions))) :n)))
+          (gur--draw review))
       (user-error (message "gur: %s" (error-message-string err))))))
 
 ;;; Finding things at point
@@ -744,7 +767,7 @@ INITIAL prefills the comment."
      (append (list "comment" "--path" (plist-get loc :path)
                    "--side" (plist-get loc :side)
                    "--line" (number-to-string (plist-get loc :line))
-                   "--revision" (number-to-string (gur--latest-revision)))
+                   "--revision" (number-to-string (gur--revision)))
              (when-let* ((start (plist-get loc :start-line)))
                (list "--start-line" (number-to-string start)))))))
 
@@ -758,7 +781,7 @@ INITIAL prefills the comment."
     (unless section (user-error "No file here"))
     (gur--compose (format "comment on %s" (oref section value))
                   (list "comment" "--path" (oref section value)
-                        "--revision" (number-to-string (gur--latest-revision))))))
+                        "--revision" (number-to-string (gur--revision))))))
 
 (defun gur-comment-review ()
   "Add a comment on the review as a whole."
@@ -823,9 +846,10 @@ INITIAL prefills the comment."
   "Show REVIEW in the current Magit diff buffer."
   (unless (derived-mode-p 'magit-diff-mode)
     (user-error "Reviews can only be shown in Magit diff buffers"))
-  (setq gur--review-id (plist-get review :id))
+  (setq gur--review-id (plist-get review :id)
+        gur--attached-spec (gur--buffer-spec))
   (gur-mode 1)
-  (gur--draw review)
+  (gur--render t)
   (gur--watch-review)
   (message (substitute-command-keys
             "Reviewing %s; \\[gur-dispatch] for review commands")
@@ -847,7 +871,8 @@ With a prefix argument, ask for a TITLE."
   (let ((default-directory (file-name-as-directory
                             (plist-get (plist-get review :target) :worktree))))
     (with-current-buffer (gur--show-spec (plist-get (plist-get review :target) :spec))
-      (gur--attach (gur--call (list "show" "--review" (plist-get review :id)))))))
+      (gur--attach review)
+      (current-buffer))))
 
 ;;;###autoload
 (defun gur-open (&optional all)

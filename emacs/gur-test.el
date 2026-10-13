@@ -188,5 +188,48 @@ Return to the review buffer afterwards, as a user would."
       (goto-char (point-min))
       (should (search-forward "bot (agent)" nil t)))))
 
+(ert-deftest gur-test-external-refresh-redraws-diff ()
+  (gur-test--with-repo
+    (with-current-buffer (gur-test--diff-buffer)
+      (gur-start)
+      (gur-test--goto-line-text "added")
+      (gur-test--comment "keep me")
+      (gur-test--write "a.txt" (replace-regexp-in-string
+                                "line 2\n" "line 2\nmore\n"
+                                (replace-regexp-in-string "line 10\n" "line 10\nadded\n" (gur-test--lines 30))))
+      (gur--call (list "refresh" "--review" gur--review-id))
+      (gur--rerender-if-changed (current-buffer))
+      (should (equal gur--shown-revision 2))
+      (gur-test--goto-line-text "added")
+      (should (equal (plist-get (gur--location-at (point)) :line) 12))
+      (forward-line 1)
+      (should (gur--rendered-line-p))
+      (gur-test--goto-line-text "line 11")
+      (gur-test--comment "second")
+      (let ((thread (car (last (gur--threads)))))
+        (should (equal (plist-get (plist-get thread :position) :line) 13))
+        (should-not (plist-get thread :outdated))))))
+
+(ert-deftest gur-test-open-cli-review-survives-refresh ()
+  (gur-test--with-repo
+    (gur-test--git "add" "a.txt")
+    (let* ((review (gur--call '("start" "--" "--staged")))
+           (buffer (gur--open-review review)))
+      (with-current-buffer buffer
+        (should gur-mode)
+        (magit-refresh-buffer)
+        (should gur-mode)
+        (should (equal gur--review-id (plist-get review :id)))))))
+
+(ert-deftest gur-test-kill-buffer-removes-watch ()
+  (gur-test--with-repo
+    (let (watch)
+      (with-current-buffer (gur-test--diff-buffer)
+        (gur-start)
+        (setq watch gur--watch)
+        (should watch)
+        (kill-buffer))
+      (should-not (file-notify-valid-p watch)))))
+
 (provide 'gur-test)
 ;;; gur-test.el ends here

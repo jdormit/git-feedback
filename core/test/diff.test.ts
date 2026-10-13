@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { changedPaths, hunksBetween, lineInHunks, mapLine, parseHunks } from "../src/diff"
+import { changedPaths, hunksBetween, lineInHunks, mapLine, parseHunks, rangeInOneHunk } from "../src/diff"
 import { lines, makeRepo, type TestRepo } from "./helpers"
 
 describe("parseHunks", () => {
@@ -57,5 +57,15 @@ describe("with a repository", () => {
     expect(lineInHunks(hunks, "new", 18)).toBe(false)
     expect(lineInHunks(hunks, "old", 16)).toBe(true)
     expect(lineInHunks(hunks, "old", 9)).toBe(false)
+  })
+
+  test("rangeInOneHunk rejects ranges that span two hunks", () => {
+    const hunks = [
+      { oldStart: 1, oldCount: 5, newStart: 1, newCount: 5 },
+      { oldStart: 20, oldCount: 5, newStart: 20, newCount: 5 },
+    ]
+    expect(rangeInOneHunk(hunks, "new", 21, 24)).toBe(true)
+    expect(rangeInOneHunk(hunks, "new", 2, 22)).toBe(false)
+    expect(rangeInOneHunk(hunks, "new", 2, 10)).toBe(false)
   })
 })

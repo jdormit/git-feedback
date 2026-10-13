@@ -41,6 +41,7 @@ export class FakeGitHub implements GitHubApi {
   issueComments: FakeIssueComment[] = []
   reviews: FakeReview[] = []
   resolved = new Set<number>()
+  pageSize = 100
   private nextId = 1000
   private clock = 0
 
@@ -186,7 +187,8 @@ export class FakeGitHub implements GitHubApi {
         startDiffSide: root.start_side ?? null,
         subjectType: root.subject_type === "file" ? "FILE" : "LINE",
         comments: {
-          nodes: comments.map((c) => ({
+          totalCount: comments.length,
+          nodes: comments.slice(0, this.pageSize).map((c) => ({
             databaseId: c.id,
             url: c.html_url,
             body: c.body,
