@@ -1,0 +1,25 @@
+{
+  "name": "git-universal-review",
+  "version": "0.1.0",
+  "description": "Review any git diff: a shared review file format with Magit, OpenCode and GitHub frontends.",
+  "type": "module",
+  "main": "core/src/index.ts",
+  "bin": {
+    "git-universal-review": "core/src/cli.ts",
+    "gur": "core/src/cli.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "build": "bun build --compile core/src/cli.ts --outfile dist/git-universal-review"
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.18.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "1.18.25",
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  }
+}
