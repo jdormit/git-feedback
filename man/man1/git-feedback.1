@@ -89,6 +89,8 @@ Comment authors default to git's
 and
 .B \-\-agent
 override them.
+Inside an agent harness, authors default to the agent; see
+.BR ENVIRONMENT .
 .SH GITHUB COMMANDS
 These call the
 .BR gh (1)
@@ -143,7 +145,23 @@ Default comment author name.
 .B FDBK_AUTHOR_KIND
 Set to
 .B agent
-to mark comments as written by an agent.
+to mark comments as written by an agent, or to
+.B human
+to turn off agent detection.
+.TP
+.BR AI_AGENT ", " CLAUDECODE ", " CODEX_THREAD_ID ", " OPENCODE ", ..."
+Set by agent harnesses in the shells they run.
+When one is present and
+.B FDBK_AUTHOR_KIND
+is unset, comments are marked as written by an agent and the author
+defaults to the agent's name:
+the value of
+.BR AI_AGENT ,
+or
+.BR claude ,
+.BR codex
+or
+.BR opencode .
 .SH FILES
 .TP
 .IB "$(git rev-parse \-\-git\-common\-dir)" /git\-feedback/reviews/ id .json

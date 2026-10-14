@@ -10,6 +10,7 @@ import {
   defaultAuthor,
   deleteComment,
   deleteReview,
+  detectAgent,
   editComment,
   refreshReview,
   reply,
@@ -41,7 +42,9 @@ Comments
 
   BODY is --body TEXT or --body-file FILE ("-" for stdin).
   Authors default to git's user.name; --author NAME and --agent override
-  (or $FDBK_AUTHOR and $FDBK_AUTHOR_KIND=agent).
+  (or $FDBK_AUTHOR and $FDBK_AUTHOR_KIND=agent). Inside Claude Code, Codex,
+  OpenCode or a harness that sets $AI_AGENT, authors default to that agent;
+  set $FDBK_AUTHOR_KIND=human to turn this off.
 
 GitHub
   github start <pr>                    review a pull request (number, owner/repo#n or URL)
@@ -61,6 +64,7 @@ export interface RunContext {
   readStdin: () => Promise<string>
   /** Overrides the gh-backed client, for tests. */
   github?: GitHubApi
+  env?: Record<string, string | undefined>
 }
 
 const OPTIONS = {
@@ -108,10 +112,11 @@ export async function run(argv: string[], ctx: RunContext): Promise<number> {
   const store = new ReviewStore(repo)
   const out = (json: unknown, text: string) => ctx.stdout(values.json ? JSON.stringify(json, null, 2) + "\n" : text.endsWith("\n") ? text : text + "\n")
   const selected = () => store.select(values.review, repo.toplevel)
+  const env = ctx.env ?? process.env
   const author = (): Author => {
-    const base = defaultAuthor(cwd)
-    const kind = values.agent || process.env["FDBK_AUTHOR_KIND"] === "agent" ? "agent" : base.kind
-    return { name: values.author ?? process.env["FDBK_AUTHOR"] ?? base.name, kind }
+    const harness = env["FDBK_AUTHOR_KIND"] === "human" ? undefined : detectAgent(env)
+    const kind = values.agent || env["FDBK_AUTHOR_KIND"] === "agent" || harness ? "agent" : "human"
+    return { name: values.author ?? env["FDBK_AUTHOR"] ?? harness ?? defaultAuthor(cwd).name, kind }
   }
   const body = async (): Promise<string> => {
     if (values.body !== undefined) return values.body

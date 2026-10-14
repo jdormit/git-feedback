@@ -127,6 +127,16 @@ Return to the review buffer afterwards, as a user would."
       (should (equal (plist-get (fdbk--location-at (point)) :line) 12))
       (should (= 12 (magit-diff-hunk-line (magit-current-section) nil))))))
 
+(ert-deftest fdbk-test-comments-are-human-inside-agent-shells ()
+  (fdbk-test--with-repo
+    (let ((process-environment (cons "OPENCODE=1" process-environment)))
+      (with-current-buffer (fdbk-test--diff-buffer)
+        (fdbk-start)
+        (fdbk-test--goto-line-text "added")
+        (fdbk-test--comment "mine")
+        (should (equal (plist-get (car (plist-get (car (fdbk--threads)) :comments)) :author)
+                       '(:name "Tester" :kind "human")))))))
+
 (ert-deftest fdbk-test-reply-resolve-and-region ()
   (fdbk-test--with-repo
     (with-current-buffer (fdbk-test--diff-buffer)

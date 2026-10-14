@@ -34,6 +34,15 @@ export function defaultAuthor(cwd: string): Author {
   return { name: configValue(cwd, "user.name") ?? process.env["USER"] ?? "unknown", kind: "human" }
 }
 
+export function detectAgent(env: Record<string, string | undefined>): string | undefined {
+  const name = env["AI_AGENT"]?.trim()
+  if (name) return name
+  if (env["CLAUDECODE"] || env["CLAUDE_CODE"]) return "claude"
+  if (env["CODEX_SANDBOX"] || env["CODEX_CI"] || env["CODEX_THREAD_ID"]) return "codex"
+  if (env["OPENCODE"] || env["OPENCODE_CLIENT"]) return "opencode"
+  return undefined
+}
+
 export function refPrefix(id: string): string {
   return `refs/git-feedback/${id}`
 }

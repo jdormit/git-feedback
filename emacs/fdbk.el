@@ -85,10 +85,17 @@ Useful when `fdbk-program' is an interpreter such as bun."
   (json-parse-string string :object-type 'plist :array-type 'list
                      :null-object nil :false-object nil))
 
+(defun fdbk--process-environment ()
+  "Return `process-environment' marking comments as written by a human.
+Otherwise the CLI attributes comments to an agent when Emacs runs
+inside an agent's shell."
+  (cons "FDBK_AUTHOR_KIND=human" process-environment))
+
 (defun fdbk--call (args &optional input)
   "Run git-feedback with ARGS, feeding INPUT on stdin.
 Returns the parsed JSON output.  Signals a `user-error' on failure."
-  (let ((stderr (make-temp-file "fdbk-stderr")))
+  (let ((stderr (make-temp-file "fdbk-stderr"))
+        (process-environment (fdbk--process-environment)))
     (unwind-protect
         (with-temp-buffer
           (let* ((out (current-buffer))
@@ -111,7 +118,8 @@ Returns the parsed JSON output.  Signals a `user-error' on failure."
   "Run git-feedback with ARGS asynchronously.
 Call CALLBACK with the parsed JSON output on success."
   (let* ((out (generate-new-buffer " *fdbk-out*"))
-         (err (generate-new-buffer " *fdbk-err*")))
+         (err (generate-new-buffer " *fdbk-err*"))
+         (process-environment (fdbk--process-environment)))
     (make-process
      :name "git-feedback"
      :buffer out

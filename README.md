@@ -32,6 +32,8 @@ fdbk refresh                           # record the current code and move thread
 
 Every command accepts `--json`, which is the contract other frontends build on. When a repository has a single open review, commands use it; otherwise pass `--review <id>` or set `$FDBK_REVIEW`. Run `fdbk --help` for the rest.
 
+Comments are marked as written by an agent when `fdbk` runs inside Claude Code, Codex, OpenCode, or any harness that sets `$AI_AGENT`. Set `FDBK_AUTHOR_KIND=human` to turn this off.
+
 ## Emacs
 
 [`emacs/fdbk.el`](emacs/fdbk.el) needs Magit, Transient and the `fdbk` command. With [straight.el](https://github.com/radian-software/straight.el):
