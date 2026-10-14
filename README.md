@@ -13,15 +13,11 @@ Reviews are JSON files in `$(git rev-parse --git-common-dir)/git-feedback/review
 ## Installing
 
 ```sh
-bun install
-bun run build                       # produces dist/fdbk
-ln -s "$PWD/dist/fdbk" ~/.local/bin/fdbk
-ln -s "$PWD/dist/fdbk" ~/.local/bin/git-feedback
-mkdir -p ~/.local/share/man/man1
-ln -s "$PWD"/man/man1/*.1 ~/.local/share/man/man1/
+./install.sh                 # or PREFIX=/usr/local ./install.sh
+./install.sh --uninstall
 ```
 
-The `git-feedback` link makes `git feedback` work as a git subcommand, and the man pages make `git feedback --help` and `man fdbk` work. GitHub sync calls the `gh` CLI, which needs to be logged in to the host.
+The script needs [Bun](https://bun.sh). It builds `dist/fdbk`, then symlinks it as `fdbk` and `git-feedback` in `$PREFIX/bin` and the man pages into `$PREFIX/share/man/man1`. `PREFIX` defaults to `~/.local`. Since these are links, rebuilding with `bun run build` updates the installed command. The `git-feedback` link makes `git feedback` work as a git subcommand, and the man pages make `git feedback --help` and `man fdbk` work. GitHub sync calls the `gh` CLI, which needs to be logged in to the host.
 
 ## Command line
 
