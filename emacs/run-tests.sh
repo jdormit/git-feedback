@@ -15,7 +15,7 @@ sandbox=$(mktemp -d "${TMPDIR:-/tmp}/fdbk-el-home.XXXXXX")
 trap 'rm -rf "$sandbox"' EXIT
 
 load_path=""
-for pkg in compat cond-let dash llama seq transient with-editor magit-section magit markdown-mode; do
+for pkg in compat cond-let dash llama seq transient with-editor magit-section magit markdown-mode goto-chg evil; do
   [ -d "$deps/$pkg" ] && load_path="$load_path -L $deps/$pkg"
 done
 

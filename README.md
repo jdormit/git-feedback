@@ -17,7 +17,7 @@ Reviews are JSON files in `$(git rev-parse --git-common-dir)/git-feedback/review
 ./install.sh --uninstall
 ```
 
-The script needs [Bun](https://bun.sh). It builds `dist/fdbk`, then symlinks it as `fdbk` and `git-feedback` in `$PREFIX/bin` and the man pages into `$PREFIX/share/man/man1`. `PREFIX` defaults to `~/.local`. Since these are links, rebuilding with `bun run build` updates the installed command. The `git-feedback` link makes `git feedback` work as a git subcommand, and the man pages make `git feedback --help` and `man fdbk` work. GitHub sync calls the `gh` CLI, which needs to be logged in to the host.
+The script needs [Bun](https://bun.sh). It builds `dist/fdbk`, then symlinks it as `fdbk` and `git-feedback` in `$PREFIX/bin` and the man pages into `$PREFIX/share/man/man1`. `PREFIX` defaults to `~/.local`. Since these are links, rebuilding with `bun run compile` updates the installed command. The `git-feedback` link makes `git feedback` work as a git subcommand, and the man pages make `git feedback --help` and `man fdbk` work. GitHub sync calls the `gh` CLI, which needs to be logged in to the host.
 
 ## Command line
 
@@ -34,11 +34,11 @@ Every command accepts `--json`, which is the contract other frontends build on. 
 
 ## Emacs
 
-[`emacs/fdbk.el`](emacs/fdbk.el) needs Magit and Transient:
+[`emacs/fdbk.el`](emacs/fdbk.el) needs Magit, Transient and the `fdbk` command. With [straight.el](https://github.com/radian-software/straight.el):
 
 ```elisp
 (use-package fdbk
-  :load-path "~/git-feedback/emacs"
+  :straight (fdbk :host github :repo "jdormit/git-feedback" :files ("emacs/fdbk.el"))
   :commands (fdbk-start fdbk-open fdbk-github-review fdbk-dispatch))
 ```
 
@@ -51,7 +51,7 @@ Staging and discarding still work while a review is shown, because the inline co
 Add the plugin to `opencode.jsonc`:
 
 ```jsonc
-"plugin": ["/Users/you/git-feedback/opencode/src/index.ts"]
+"plugin": ["github:jdormit/git-feedback"]
 ```
 
 It gives agents `review_list`, `review_show`, `review_refresh`, `review_reply`, `review_resolve` and `review_comment`, and registers an `/address-review` command that asks the agent to work through the open threads: fix what it agrees with, reply to everything, and resolve only the threads it actually addressed. Agent comments are marked as written by an agent, so they're easy to tell apart from yours.

@@ -21,7 +21,7 @@ beforeEach(() => {
   cpSync(join(root, "man"), join(repo, "man"), { recursive: true })
   writeFileSync(
     join(fakeBin, "bun"),
-    `#!/bin/sh\nif [ "$*" = "run build" ]; then mkdir -p dist && printf '#!/bin/sh\\n' > dist/fdbk && chmod +x dist/fdbk; fi\n`,
+    `#!/bin/sh\nif [ "$*" = "run compile" ]; then mkdir -p dist && printf '#!/bin/sh\\n' > dist/fdbk && chmod +x dist/fdbk; fi\n`,
   )
   chmodSync(join(fakeBin, "bun"), 0o755)
 })

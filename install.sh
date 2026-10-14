@@ -56,7 +56,7 @@ links | while IFS=$tab read -r target link; do
   fi
 done
 
-(cd "$repo" && bun install && bun run build)
+(cd "$repo" && bun install && bun run compile)
 
 mkdir -p "$bin" "$man1"
 links | while IFS=$tab read -r target link; do

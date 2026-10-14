@@ -56,3 +56,9 @@ test("registers the /address-review command", async () => {
   await hooks.config!(config)
   expect(config.command["address-review"].template).toContain("review_show")
 })
+
+test("package.json has no scripts that make npm prepare a git install", async () => {
+  const pkg = await Bun.file(new URL("../../package.json", import.meta.url)).json()
+  expect(pkg).not.toHaveProperty("workspaces")
+  for (const name of ["build", "prepare", "prepack", "preinstall", "install", "postinstall"]) expect(pkg.scripts).not.toHaveProperty(name)
+})

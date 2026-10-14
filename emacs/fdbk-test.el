@@ -231,5 +231,20 @@ Return to the review buffer afterwards, as a user would."
         (kill-buffer))
       (should-not (file-notify-valid-p watch)))))
 
+(ert-deftest fdbk-test-dispatch-key-wins-over-evil-bindings ()
+  (skip-unless (require 'evil nil t))
+  (unwind-protect
+      (fdbk-test--with-repo
+        (with-current-buffer (fdbk-test--diff-buffer)
+          ;; What evil-collection does to Magit's keymaps.
+          (evil-make-overriding-map magit-diff-mode-map 'all)
+          (evil-local-mode 1)
+          (fdbk-start)
+          (fdbk-test--goto-line-text "added")
+          (dolist (state '(normal visual motion insert emacs))
+            (evil-change-state state)
+            (should (eq (key-binding (kbd "C-c C-r")) #'fdbk-dispatch)))))
+    (define-key magit-diff-mode-map [override-state] nil t)))
+
 (provide 'fdbk-test)
 ;;; fdbk-test.el ends here

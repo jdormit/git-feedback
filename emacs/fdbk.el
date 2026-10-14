@@ -217,6 +217,15 @@ Call CALLBACK with the parsed JSON output on success."
   :doc "Keymap for `fdbk-mode'."
   "C-c C-r" #'fdbk-dispatch)
 
+(declare-function evil-define-key* "evil-core")
+(declare-function evil-normalize-keymaps "evil-core")
+
+;; evil-collection makes Magit's keymaps overriding maps, which shadow
+;; ordinary minor mode keymaps in Evil states.
+(with-eval-after-load 'evil
+  (evil-define-key* '(normal visual motion insert emacs) fdbk-mode-map
+    (kbd "C-c C-r") #'fdbk-dispatch))
+
 (defvar-keymap fdbk-thread-section-map
   :doc "Keymap for review thread sections."
   :parent fdbk-mode-map
@@ -247,7 +256,8 @@ Call CALLBACK with the parsed JSON output on success."
       (progn
         (add-hook 'magit-refresh-buffer-hook #'fdbk--after-refresh nil t)
         (add-hook 'change-major-mode-hook #'fdbk--unwatch nil t)
-        (add-hook 'kill-buffer-hook #'fdbk--unwatch nil t))
+        (add-hook 'kill-buffer-hook #'fdbk--unwatch nil t)
+        (when (fboundp 'evil-normalize-keymaps) (evil-normalize-keymaps)))
     (remove-hook 'magit-refresh-buffer-hook #'fdbk--after-refresh t)
     (remove-hook 'change-major-mode-hook #'fdbk--unwatch t)
     (remove-hook 'kill-buffer-hook #'fdbk--unwatch t)

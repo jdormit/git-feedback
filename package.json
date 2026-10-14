@@ -11,7 +11,7 @@
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "build": "bun build --compile core/src/cli.ts --outfile dist/fdbk"
+    "compile": "bun build --compile core/src/cli.ts --outfile dist/fdbk"
   },
   "license": "MIT",
   "peerDependencies": {
