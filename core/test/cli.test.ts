@@ -11,7 +11,7 @@ beforeEach(() => {
 })
 afterEach(() => repo.cleanup())
 
-async function gur(args: string[], stdin = "") {
+async function fdbk(args: string[], stdin = "") {
   let stdout = ""
   let stderr = ""
   const code = await run(args, {
@@ -24,37 +24,37 @@ async function gur(args: string[], stdin = "") {
 }
 
 test("start, comment from stdin, reply, resolve and show", async () => {
-  const started = (await gur(["start", "--json", "--title", "WIP", "--", "HEAD", "--", "a.txt"])).json()
+  const started = (await fdbk(["start", "--json", "--title", "WIP", "--", "HEAD", "--", "a.txt"])).json()
   expect(started.target.spec).toEqual(["HEAD", "--", "a.txt"])
   expect(started.title).toBe("WIP")
 
-  const added = (await gur(["comment", "--json", "--path", "a.txt", "--line", "11", "--body-file", "-"], "new line?\n")).json()
+  const added = (await fdbk(["comment", "--json", "--path", "a.txt", "--line", "11", "--body-file", "-"], "new line?\n")).json()
   expect(added.comment.body).toBe("new line?")
   expect(added.thread.position.line).toBe(11)
 
-  await gur(["reply", added.thread.id, "--agent", "--author", "bot", "--body", "yes"])
-  await gur(["resolve", added.thread.id])
+  await fdbk(["reply", added.thread.id, "--agent", "--author", "bot", "--body", "yes"])
+  await fdbk(["resolve", added.thread.id])
 
-  const shown = await gur(["show"])
+  const shown = await fdbk(["show"])
   expect(shown.stdout).toContain("0 thread(s) shown, 1 resolved hidden")
-  const all = await gur(["show", "--all"])
+  const all = await fdbk(["show", "--all"])
   expect(all.stdout).toContain("> 11 | line 11")
   expect(all.stdout).toContain("bot (agent)")
 
-  const list = (await gur(["list", "--json"])).json()
+  const list = (await fdbk(["list", "--json"])).json()
   expect(list).toMatchObject([{ id: started.id, unresolved: 0, threads: 1 }])
 })
 
 test("argument errors are reported", async () => {
-  await gur(["start"])
-  await expect(gur(["comment", "--line", "3", "--body", "x"])).rejects.toThrow(/--path/)
-  await expect(gur(["comment", "--path", "a.txt"])).rejects.toThrow(/--body/)
-  await expect(gur(["frobnicate"])).rejects.toThrow(/Unknown command/)
+  await fdbk(["start"])
+  await expect(fdbk(["comment", "--line", "3", "--body", "x"])).rejects.toThrow(/--path/)
+  await expect(fdbk(["comment", "--path", "a.txt"])).rejects.toThrow(/--body/)
+  await expect(fdbk(["frobnicate"])).rejects.toThrow(/Unknown command/)
 })
 
 test("start keeps revisions before a -- path separator", async () => {
-  const a = (await gur(["start", "--json", "HEAD", "--", "a.txt"])).json()
+  const a = (await fdbk(["start", "--json", "HEAD", "--", "a.txt"])).json()
   expect(a.target.spec).toEqual(["HEAD", "--", "a.txt"])
-  const b = (await gur(["start", "--json", "--new", "--", "HEAD", "--", "a.txt"])).json()
+  const b = (await fdbk(["start", "--json", "--new", "--", "HEAD", "--", "a.txt"])).json()
   expect(b.target.spec).toEqual(["HEAD", "--", "a.txt"])
 })

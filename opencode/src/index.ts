@@ -38,13 +38,13 @@ export const ReviewPlugin: Plugin = async (_input, options) => {
     async config(config) {
       config.command ??= {}
       config.command["address-review"] ??= {
-        description: "Work through open git-universal-review comments: fix code, reply and resolve.",
+        description: "Work through open git-feedback comments: fix code, reply and resolve.",
         template: ADDRESS_REVIEW,
       }
     },
     tool: {
       review_list: tool({
-        description: "List git-universal-review code reviews in this repository, with their ids and open thread counts.",
+        description: "List git-feedback code reviews in this repository, with their ids and open thread counts.",
         args: { all: tool.schema.boolean().optional().describe("Include closed reviews") },
         async execute(args, ctx) {
           return withStore(ctx.directory, (store) => {

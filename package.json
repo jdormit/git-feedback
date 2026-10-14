@@ -1,17 +1,17 @@
 {
-  "name": "git-universal-review",
+  "name": "git-feedback",
   "version": "0.1.0",
   "description": "Review any git diff: a shared review file format with Magit, OpenCode and GitHub frontends.",
   "type": "module",
   "main": "opencode/src/index.ts",
   "bin": {
-    "git-universal-review": "core/src/cli.ts",
-    "gur": "core/src/cli.ts"
+    "fdbk": "core/src/cli.ts",
+    "git-feedback": "core/src/cli.ts"
   },
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "build": "bun build --compile core/src/cli.ts --outfile dist/git-universal-review"
+    "build": "bun build --compile core/src/cli.ts --outfile dist/fdbk"
   },
   "license": "MIT",
   "peerDependencies": {
@@ -26,10 +26,15 @@
     ".": "./opencode/src/index.ts",
     "./core": "./core/src/index.ts"
   },
+  "man": [
+    "man/man1/git-feedback.1",
+    "man/man1/fdbk.1"
+  ],
   "files": [
     "core/src",
     "opencode/src",
-    "emacs/gur.el",
+    "emacs/fdbk.el",
+    "man",
     "README.md"
   ]
 }

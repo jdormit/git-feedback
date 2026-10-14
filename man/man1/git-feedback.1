@@ -1,0 +1,156 @@
+.TH GIT-FEEDBACK 1 2026-10-14 "git-feedback 0.1.0" "User Commands"
+.SH NAME
+git-feedback, fdbk \- review any git diff
+.SH SYNOPSIS
+.B git feedback
+.RB [ \-C
+.IR dir ]
+.I command
+.RI [ options ]
+.br
+.B fdbk
+.RB [ \-C
+.IR dir ]
+.I command
+.RI [ options ]
+.SH DESCRIPTION
+.B fdbk
+keeps code reviews of any diff that
+.BR git\-diff (1)
+can show: a branch, a commit, the index or the worktree.
+Comments live in threads anchored to lines of the diff.
+Each refresh records the current code as a numbered revision and moves
+threads to their new lines; threads whose lines changed are marked outdated.
+.PP
+.B git feedback
+and
+.B fdbk
+are the same program.
+.SH REVIEW COMMANDS
+.TP
+\fBstart\fR [\fB\-\-title\fR \fIT\fR] [\fB\-\-new\fR] [\fB\-\-\fR] [\fIgit diff args\fR...]
+Start a review of the diff, or resume the open review of the same diff.
+.B \-\-new
+always starts a new one.
+Git diff options such as
+.B \-\-cached
+go after
+.BR \-\- .
+With no arguments, reviews what plain
+.B git diff
+shows: unstaged changes.
+.TP
+.BR list " [" \-\-all ]
+List open reviews, or all reviews with
+.BR \-\-all .
+.TP
+.BR show " [" \-\-all "] [" \-\-no\-refresh ]
+Refresh the review, then print unresolved threads with code context.
+.B \-\-all
+includes resolved threads.
+.TP
+.B refresh
+Resolve the diff again, record a new revision if the code changed,
+and move threads.
+.TP
+.BR close " | " reopen " | " rm
+Close, reopen or delete the review.
+.SH COMMENT COMMANDS
+.TP
+\fBcomment\fR [\fB\-\-path\fR \fIP\fR [\fB\-\-line\fR \fIN\fR [\fB\-\-start\-line\fR \fIM\fR]] [\fB\-\-side old\fR|\fBnew\fR]] [\fB\-\-revision\fR \fIN\fR] \fIBODY\fR
+Start a thread on a line or line range, on a whole file (only
+.BR \-\-path ),
+or on the whole review (no
+.BR \-\-path ).
+.B \-\-side old
+comments on the base side of the diff.
+.TP
+.BI reply " thread BODY"
+Reply to a thread.
+.TP
+.BI edit " comment BODY"
+Replace the text of a comment.
+.TP
+.BI delete " comment"
+Delete a comment.
+.TP
+\fBresolve\fR \fIthread\fR | \fBunresolve\fR \fIthread\fR
+Mark a thread resolved or unresolved.
+.PP
+.I BODY
+is
+.BI \-\-body " text"
+or
+.BI \-\-body\-file " file"
+.RB ( \- " for stdin)."
+Comment authors default to git's
+.BR user.name ;
+.BI \-\-author " name"
+and
+.B \-\-agent
+override them.
+.SH GITHUB COMMANDS
+These call the
+.BR gh (1)
+CLI, which must be logged in to the host.
+.I pr
+is a pull request number,
+.IR owner / repo # n ,
+or a pull request URL.
+.TP
+.BI "github start" " pr"
+Fetch the pull request, start a review of
+.IR base ... head ,
+and import its comments.
+.TP
+.BI "github link" " pr"
+Link the current review to a pull request.
+.TP
+.B github pull
+Import new comments, edits and resolution changes.
+.TP
+\fBgithub push\fR [\fB\-\-event approve\fR|\fBrequest\-changes\fR|\fBcomment\fR] [\fB\-\-body\fR \fItext\fR]
+Submit new comments as a review, and send replies, edits and resolution changes.
+.SH COMMON OPTIONS
+.TP
+.BI \-C " dir"
+Run as if started in
+.IR dir .
+.TP
+.BI \-\-review " id"
+Choose a review by id or unique id prefix.
+By default,
+.B $FDBK_REVIEW
+is used, or the only open review.
+.TP
+.B \-\-json
+Print JSON instead of text.
+.TP
+.BR \-h ", " \-\-help
+Print a usage summary.
+.B git feedback \-\-help
+shows this page instead.
+.SH ENVIRONMENT
+.TP
+.B FDBK_REVIEW
+Review to use when
+.B \-\-review
+is not given.
+.TP
+.B FDBK_AUTHOR
+Default comment author name.
+.TP
+.B FDBK_AUTHOR_KIND
+Set to
+.B agent
+to mark comments as written by an agent.
+.SH FILES
+.TP
+.IB "$(git rev-parse \-\-git\-common\-dir)" /git\-feedback/reviews/ id .json
+Review files, shared by all worktrees of a repository.
+.TP
+.BI refs/git\-feedback/ id /
+Refs that keep each revision's code from being garbage collected.
+.SH SEE ALSO
+.BR git\-diff (1),
+.BR gh (1)

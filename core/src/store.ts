@@ -14,7 +14,7 @@ export class ReviewStore {
   readonly dir: string
 
   constructor(readonly repo: Repo) {
-    this.dir = join(repo.commonDir, "universal-review", "reviews")
+    this.dir = join(repo.commonDir, "git-feedback", "reviews")
   }
 
   path(id: string): string {
@@ -29,7 +29,7 @@ export class ReviewStore {
         try {
           return [this.load(f.slice(0, -5))]
         } catch (e) {
-          process.stderr.write(`gur: skipping ${f}: ${(e as Error).message}\n`)
+          process.stderr.write(`fdbk: skipping ${f}: ${(e as Error).message}\n`)
           return []
         }
       })
@@ -70,11 +70,11 @@ export class ReviewStore {
   }
 
   /**
-   * Pick a review: by id or unique id prefix, then $GUR_REVIEW, then the only open
+   * Pick a review: by id or unique id prefix, then $FDBK_REVIEW, then the only open
    * review (preferring ones whose worktree is TOPLEVEL).
    */
   select(idOrPrefix?: string, toplevel: string = this.repo.toplevel): Review {
-    const wanted = idOrPrefix || process.env["GUR_REVIEW"]
+    const wanted = idOrPrefix || process.env["FDBK_REVIEW"]
     const all = this.list()
     if (wanted) {
       if (existsSync(this.path(wanted))) return this.load(wanted)
@@ -86,7 +86,7 @@ export class ReviewStore {
     const here = open.filter((r) => r.target.worktree === toplevel)
     const candidates = here.length ? here : open
     if (candidates.length === 1) return candidates[0]!
-    if (candidates.length === 0) throw new Error("No open reviews. Start one with `gur start`.")
+    if (candidates.length === 0) throw new Error("No open reviews. Start one with `fdbk start`.")
     const listing = candidates.map((r) => `  ${r.id}  ${r.title}`).join("\n")
     throw new Error(`Several open reviews; pass --review <id>:\n${listing}`)
   }

@@ -36,9 +36,9 @@ describe("startReview", () => {
     expect(created).toBe(true)
     expect(review.target.worktree).toBe(repo.dir)
     expect(review.target.revisions).toHaveLength(1)
-    expect(existsSync(join(repo.dir, ".git", "universal-review", "reviews", `${review.id}.json`))).toBe(true)
+    expect(existsSync(join(repo.dir, ".git", "git-feedback", "reviews", `${review.id}.json`))).toBe(true)
     const rev = review.target.revisions[0]!
-    expect(repo.git("rev-parse", `refs/universal-review/${review.id}/1/head`).trim()).toBe(rev.head)
+    expect(repo.git("rev-parse", `refs/git-feedback/${review.id}/1/head`).trim()).toBe(rev.head)
     expect(repo.git("status", "--porcelain")).toBe(" M src/a.txt\n")
   })
 
@@ -154,7 +154,7 @@ describe("refreshReview", () => {
     expect(byId.get(below.id)).toMatchObject({ outdated: false, position: { revision: 2, line: 22 } })
     expect(byId.get(anchored.id)).toMatchObject({ outdated: true, position: { revision: 1, line: 6, startLine: 5 } })
     expect(byId.get(old.id)).toMatchObject({ outdated: false, position: { revision: 2, side: "old", line: 20 } })
-    expect(repo.git("rev-parse", `refs/universal-review/${review.id}/2/head`).trim()).toBe(
+    expect(repo.git("rev-parse", `refs/git-feedback/${review.id}/2/head`).trim()).toBe(
       result.review.target.revisions[1]!.head,
     )
   })
@@ -189,7 +189,7 @@ describe("ReviewStore", () => {
     const { review } = startReview(store, repo.dir, { spec: ["HEAD"] })
     deleteReview(store, review.id)
     expect(store.list()).toHaveLength(0)
-    expect(repo.git("for-each-ref", "refs/universal-review/")).toBe("")
+    expect(repo.git("for-each-ref", "refs/git-feedback/")).toBe("")
   })
 
   test("worktrees share the store", () => {

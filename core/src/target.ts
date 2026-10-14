@@ -59,7 +59,7 @@ export function indexTree(cwd: string): string {
 
 /** Tree of the tracked files in the worktree, built in a scratch index so the real one is untouched. */
 export function worktreeTree(cwd: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "gur-index-"))
+  const dir = mkdtempSync(join(tmpdir(), "fdbk-index-"))
   try {
     const scratch = join(dir, "index")
     const real = indexFile(cwd)

@@ -485,7 +485,7 @@ export async function githubPush(store: ReviewStore, id: string, api: GitHubApi,
       continue
     }
     if (latest.head !== pr.head.sha) {
-      throw new Error(`Review is at ${latest.head.slice(0, 10)} but the PR head is ${pr.head.sha.slice(0, 10)}; run \`gur github pull\` first`)
+      throw new Error(`Review is at ${latest.head.slice(0, 10)} but the PR head is ${pr.head.sha.slice(0, 10)}; run \`fdbk github pull\` first`)
     }
     prMergeBase ??= fetchMergeBase(cwd, id, link, pr.base.ref)
     if (latest.base !== prMergeBase) {

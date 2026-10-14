@@ -21,7 +21,8 @@ import {
 import { ReviewStore } from "./store"
 import type { Author, Side } from "./types"
 
-const USAGE = `usage: git-universal-review [-C <dir>] <command> [options]
+const USAGE = `usage: fdbk [-C <dir>] <command> [options]
+       git feedback [-C <dir>] <command> [options]
 
 Reviews
   start [--title T] [--new] [--] [<git diff args>...]   start or resume a review of a diff
@@ -40,7 +41,7 @@ Comments
 
   BODY is --body TEXT or --body-file FILE ("-" for stdin).
   Authors default to git's user.name; --author NAME and --agent override
-  (or $GUR_AUTHOR and $GUR_AUTHOR_KIND=agent).
+  (or $FDBK_AUTHOR and $FDBK_AUTHOR_KIND=agent).
 
 GitHub
   github start <pr>                    review a pull request (number, owner/repo#n or URL)
@@ -49,7 +50,7 @@ GitHub
   github push [--event approve|request-changes|comment] [--body TEXT]
 
 Common options
-  --review <id>   choose a review (default: $GUR_REVIEW, or the only open one)
+  --review <id>   choose a review (default: $FDBK_REVIEW, or the only open one)
   --json          print JSON instead of text
 `
 
@@ -109,8 +110,8 @@ export async function run(argv: string[], ctx: RunContext): Promise<number> {
   const selected = () => store.select(values.review, repo.toplevel)
   const author = (): Author => {
     const base = defaultAuthor(cwd)
-    const kind = values.agent || process.env["GUR_AUTHOR_KIND"] === "agent" ? "agent" : base.kind
-    return { name: values.author ?? process.env["GUR_AUTHOR"] ?? base.name, kind }
+    const kind = values.agent || process.env["FDBK_AUTHOR_KIND"] === "agent" ? "agent" : base.kind
+    return { name: values.author ?? process.env["FDBK_AUTHOR"] ?? base.name, kind }
   }
   const body = async (): Promise<string> => {
     if (values.body !== undefined) return values.body
@@ -280,7 +281,7 @@ async function runGithub([sub, prArg]: string[], { store, cwd, out, selected, ap
       return 0
     }
     default:
-      throw new Error("Usage: gur github start|link|pull|push")
+      throw new Error("Usage: fdbk github start|link|pull|push")
   }
 }
 
@@ -291,7 +292,7 @@ if (import.meta.main) {
     stderr: (t) => process.stderr.write(t),
     readStdin: () => Bun.stdin.text(),
   }).catch((e: Error) => {
-    process.stderr.write(`gur: ${e.message}\n`)
+    process.stderr.write(`fdbk: ${e.message}\n`)
     return 1
   })
   process.exit(code)

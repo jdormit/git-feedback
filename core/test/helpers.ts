@@ -17,7 +17,7 @@ export function lines(n: number, prefix = "line"): string {
 }
 
 export function makeRepo(): TestRepo {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), "gur-test-")))
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "fdbk-test-")))
   const run = (...args: string[]) => git(args, { cwd: dir })
   run("init", "-q", "-b", "main")
   run("config", "user.name", "Test User")

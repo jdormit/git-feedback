@@ -35,7 +35,7 @@ export function defaultAuthor(cwd: string): Author {
 }
 
 export function refPrefix(id: string): string {
-  return `refs/universal-review/${id}`
+  return `refs/git-feedback/${id}`
 }
 
 function pinRevision(cwd: string, id: string, rev: Revision): void {
