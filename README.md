@@ -58,6 +58,8 @@ For OpenCode 2 (2.0.29 or later), add the plugin to `opencode.jsonc`:
 
 It gives agents `review_list`, `review_show`, `review_refresh`, `review_reply`, `review_resolve` and `review_comment`, and registers an `/address-review` command that asks the agent to work through the open threads: fix what it agrees with, reply to everything, and resolve only the threads it actually addressed. Agent comments are marked as written by an agent, so they're easy to tell apart from yours.
 
+Agents call the review tools through `execute`, using their paths in the Code Mode catalog. `review_list` returns structured review summaries for filtering and combining results; its display text is unchanged. `review_show` returns the formatted review with code context.
+
 ### Using OpenCode 1.x
 
 The `v1` git tag is the last V1-compatible version. Install it with the OpenCode 1.x config key:

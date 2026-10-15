@@ -6,7 +6,7 @@ import { ReviewStore } from "../../core/src/store"
 import { lines, makeRepo, type TestRepo } from "../../core/test/helpers"
 import plugin from "../src/index"
 
-type ToolDef = { name: string; description: string; input: any; options?: { codemode?: boolean }; execute: (input: any, ctx: any) => Promise<{ content?: unknown }> }
+type ToolDef = { name: string; description: string; input: any; output?: any; options?: { codemode?: boolean }; execute: (input: any, ctx: any) => Promise<{ content?: unknown; output?: any }> }
 type CommandDef = { name: string; description?: string; execute: (input: any) => Promise<void> }
 
 let repo: TestRepo
@@ -68,7 +68,7 @@ test("registers every review tool with a JSON Schema input", () => {
   )
   for (const t of tools.values()) {
     expect(t.input.type).toBe("object")
-    expect(t.options?.codemode).toBe(false)
+    expect(t.options?.codemode).not.toBe(false)
   }
   expect(tools.get("review_reply")!.input.required).toEqual(["thread", "body"])
 })
@@ -123,6 +123,26 @@ test("tool errors are returned as text", async () => {
   expect(await call("review_show", {})).toMatch(/No open reviews/)
 })
 
+test("review_list returns structured summaries with the same filtering as its text", async () => {
+  const list = tools.get("review_list")!
+  expect(list.output).toBeDefined()
+  expect((await list.execute({}, {})).output).toEqual({ reviews: [] })
+  const { review } = startReview(store, repo.dir, { spec: ["HEAD"], title: "Check this" })
+  const result = await list.execute({}, {})
+  expect(result.output.reviews[0]).toMatchObject({ id: review.id, title: "Check this", status: "open", unresolved: 0 })
+  expect(result.content).toBe(`${review.id}  open  0 open  Check this  (git diff HEAD)`)
+  store.mutate(review.id, (r) => { r.status = "closed" })
+  expect(await list.execute({}, {})).toMatchObject({ content: "No reviews.", output: { reviews: [] } })
+  expect((await list.execute({ all: true }, {})).output.reviews[0].status).toBe("closed")
+})
+
+test("review_list returns structured errors alongside display text", async () => {
+  await setup({}, "/dev/null")
+  const result = await tools.get("review_list")!.execute({}, {})
+  expect(result.content).toMatch(/^Error:/)
+  expect(result.output).toEqual({ error: result.content })
+})
+
 test("/address-review prompts the session with the user's arguments", async () => {
   const command = commands.get("address-review")!
   expect(command.description).toBeTruthy()
@@ -133,6 +153,7 @@ test("/address-review prompts the session with the user's arguments", async () =
   expect(sent.delivery).toBe("queue")
   expect(sent.files).toEqual([])
   expect(sent.text).toContain("review_show")
+  expect(sent.text).toContain("Use execute")
   expect(sent.text).not.toContain("$ARGUMENTS")
   expect(sent.text.endsWith("\n\nfocus on a.txt")).toBe(true)
 })

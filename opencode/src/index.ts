@@ -7,7 +7,9 @@ import type { Author } from "../../core/src/types"
 
 const ADDRESS_REVIEW = `Address the open review comments on this change.
 
-1. Call review_show to read the unresolved threads.
+Use execute to call the git-feedback tools at their exact paths in the Code Mode catalog.
+
+1. Use review_show to read the unresolved threads.
 2. For each thread, decide whether the feedback is right. Make the code change when it is.
 3. Call review_refresh after editing, so threads follow the code.
 4. Reply to every thread with review_reply: say what you changed, or explain why you disagree.
@@ -30,6 +32,29 @@ function withoutMention<T extends { mention?: unknown }>({ mention, ...attachmen
 
 type ReviewArgs = { review?: string }
 
+const listOutput = {
+  anyOf: [
+    object({
+      reviews: {
+        type: "array",
+        items: object({
+          id: { type: "string" },
+          title: { type: "string" },
+          status: { type: "string", enum: ["open", "closed"] },
+          spec: { type: "array", items: { type: "string" } },
+          worktree: { type: "string" },
+          revisions: { type: "integer" },
+          threads: { type: "integer" },
+          unresolved: { type: "integer" },
+          updatedAt: { type: "string" },
+          github: { type: "string" },
+        }, ["id", "title", "status", "spec", "worktree", "revisions", "threads", "unresolved", "updatedAt"]),
+      },
+    }, ["reviews"]),
+    object({ error: { type: "string" } }, ["error"]),
+  ],
+}
+
 export default Plugin.define({
   id: "git-feedback",
   async setup(ctx) {
@@ -51,21 +76,25 @@ export default Plugin.define({
     await ctx.tool.transform((editor) => {
       editor.add({
         name: "review_list",
-        options: { codemode: false },
         description: "List git-feedback code reviews in this repository, with their ids and open thread counts.",
         input: object({ all: { type: "boolean", description: "Include closed reviews" } }),
+        output: listOutput,
         execute: async (input) => {
           const args = input as { all?: boolean }
-          return withStore((store) => {
-            const rows = store.list().filter((r) => args.all || r.status === "open").map(summarize)
-            if (!rows.length) return "No reviews."
-            return rows.map((r) => `${r.id}  ${r.status}  ${r.unresolved} open  ${r.title}  (git diff ${r.spec.join(" ")})`).join("\n")
-          })
+          try {
+            const reviews = new ReviewStore(openRepo(directory)).list().filter((r) => args.all || r.status === "open").map(summarize)
+            const content = reviews.length
+              ? reviews.map((r) => `${r.id}  ${r.status}  ${r.unresolved} open  ${r.title}  (git diff ${r.spec.join(" ")})`).join("\n")
+              : "No reviews."
+            return { content, output: { reviews } }
+          } catch (e) {
+            const content = `Error: ${(e as Error).message}`
+            return { content, output: { error: content } }
+          }
         },
       })
       editor.add({
         name: "review_show",
-        options: { codemode: false },
         description:
           "Show a code review's comment threads with the code they refer to. Re-anchors threads to the current code first. " +
           "Shows unresolved threads unless include_resolved is set.",
@@ -86,7 +115,6 @@ export default Plugin.define({
       })
       editor.add({
         name: "review_refresh",
-        options: { codemode: false },
         description: "Record the current code as a new review revision and move threads onto it. Call after editing code under review.",
         input: object({ review: reviewArg }),
         execute: async (input) => {
@@ -101,7 +129,6 @@ export default Plugin.define({
       })
       editor.add({
         name: "review_reply",
-        options: { codemode: false },
         description: "Reply to a review thread, optionally resolving it.",
         input: object(
           {
@@ -124,7 +151,6 @@ export default Plugin.define({
       })
       editor.add({
         name: "review_resolve",
-        options: { codemode: false },
         description: "Resolve or reopen a review thread.",
         input: object(
           {
@@ -145,7 +171,6 @@ export default Plugin.define({
       })
       editor.add({
         name: "review_comment",
-        options: { codemode: false },
         description:
           "Start a new review thread. Give path and line for a line comment (side 'new' is the changed code, 'old' the original), " +
           "path alone for a file comment, or neither for a comment on the whole review.",
