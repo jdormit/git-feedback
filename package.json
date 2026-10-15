@@ -15,15 +15,16 @@
   },
   "license": "MIT",
   "peerDependencies": {
-    "@opencode-ai/plugin": ">=1.18.0"
+    "@opencode/plugin": ">=2.0.29"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "1.18.25",
+    "@opencode/plugin": "^2.0.29",
     "@types/bun": "latest",
     "typescript": "^5.7.0"
   },
   "exports": {
     ".": "./opencode/src/index.ts",
+    "./server": "./opencode/src/index.ts",
     "./core": "./core/src/index.ts"
   },
   "man": [
@@ -33,6 +34,7 @@
   "files": [
     "core/src",
     "opencode/src",
+    "server.ts",
     "emacs/fdbk.el",
     "man",
     "README.md"

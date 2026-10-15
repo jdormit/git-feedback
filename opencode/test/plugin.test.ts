@@ -1,27 +1,77 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
+import type { Plugin } from "@opencode/plugin"
 import { openRepo } from "../../core/src/git"
 import { addThread, startReview } from "../../core/src/review"
 import { ReviewStore } from "../../core/src/store"
 import { lines, makeRepo, type TestRepo } from "../../core/test/helpers"
-import { ReviewPlugin } from "../src/index"
+import plugin from "../src/index"
+
+type ToolDef = { name: string; description: string; input: any; options?: { codemode?: boolean }; execute: (input: any, ctx: any) => Promise<{ content?: unknown }> }
+type CommandDef = { name: string; description?: string; execute: (input: any) => Promise<void> }
 
 let repo: TestRepo
 let store: ReviewStore
-let hooks: Awaited<ReturnType<typeof ReviewPlugin>>
+let tools: Map<string, ToolDef>
+let commands: Map<string, CommandDef>
+let prompts: any[]
+
+async function setup(options: Record<string, unknown> = {}, directory = repo.dir) {
+  tools = new Map()
+  commands = new Map()
+  prompts = []
+  const ctx = {
+    options,
+    location: { directory, project: { id: "p", directory, canonical: directory } },
+    tool: {
+      transform: async (fn: (editor: any) => void) => {
+        fn({ add: (t: ToolDef) => tools.set(t.name, t) })
+        return { dispose: async () => {} }
+      },
+    },
+    command: {
+      transform: async (fn: (editor: any) => void) => {
+        fn({ add: (c: CommandDef) => commands.set(c.name, c) })
+        return { dispose: async () => {} }
+      },
+    },
+    session: {
+      prompt: async (input: any) => {
+        prompts.push(input)
+        return {}
+      },
+    },
+  } as unknown as Plugin.Context
+  await plugin.setup(ctx)
+}
 
 beforeEach(async () => {
   repo = makeRepo()
   repo.commit("init", { "a.txt": lines(10) })
   repo.write("a.txt", lines(12))
   store = new ReviewStore(openRepo(repo.dir))
-  hooks = await ReviewPlugin({ directory: repo.dir } as any)
+  await setup()
 })
 afterEach(() => repo.cleanup())
 
-function call(name: string, args: Record<string, unknown>) {
-  const t = hooks.tool![name]!
-  return t.execute(args as any, { directory: repo.dir, worktree: repo.dir, sessionID: "s", agent: "build" } as any) as Promise<string>
+async function call(name: string, input: Record<string, unknown>) {
+  const result = await tools.get(name)!.execute(input, { sessionID: "s", agent: "build", messageID: "m", id: "c" })
+  return result.content as string
 }
+
+test("exports a plugin definition with a stable id", () => {
+  expect(plugin.id).toBe("git-feedback")
+})
+
+test("registers every review tool with a JSON Schema input", () => {
+  expect([...tools.keys()].sort()).toEqual(
+    ["review_comment", "review_list", "review_refresh", "review_reply", "review_resolve", "review_show"].sort(),
+  )
+  for (const t of tools.values()) {
+    expect(t.input.type).toBe("object")
+    expect(t.options?.codemode).toBe(false)
+  }
+  expect(tools.get("review_reply")!.input.required).toEqual(["thread", "body"])
+})
 
 test("review_show lists unresolved threads with code context", async () => {
   const { review } = startReview(store, repo.dir, { spec: ["HEAD"] })
@@ -31,6 +81,21 @@ test("review_show lists unresolved threads with code context", async () => {
   expect(out).toContain("> 11 | line 11")
 })
 
+test("plugin instances use their own location for session tool calls", async () => {
+  startReview(store, repo.dir, { spec: ["HEAD"], title: "First repository" })
+  const first = tools.get("review_list")!
+  const other = makeRepo()
+  try {
+    other.commit("init", { "b.txt": lines(2) })
+    await setup({}, other.dir)
+    expect(await call("review_list", {})).toBe("No reviews.")
+    const result = await first.execute({}, { sessionID: "first-session" })
+    expect(result.content).toContain("First repository")
+  } finally {
+    other.cleanup()
+  }
+})
+
 test("agents reply and resolve as agents", async () => {
   const { review } = startReview(store, repo.dir, { spec: ["HEAD"] })
   const { thread } = addThread(store, review.id, { location: { path: "a.txt", line: 11 }, body: "fix", author: { name: "Jeremy", kind: "human" } })
@@ -38,6 +103,13 @@ test("agents reply and resolve as agents", async () => {
   const saved = store.load(review.id).threads[0]!
   expect(saved.resolved).toBe(true)
   expect(saved.comments[1]!.author).toEqual({ name: "opencode", kind: "agent" })
+})
+
+test("the author option names the agent", async () => {
+  await setup({ author: "claude" })
+  const { review } = startReview(store, repo.dir, { spec: ["HEAD"] })
+  await call("review_comment", { body: "Note" })
+  expect(store.load(review.id).threads[0]!.comments[0]!.author).toEqual({ name: "claude", kind: "agent" })
 })
 
 test("review_comment adds an agent thread and review_list summarizes", async () => {
@@ -51,10 +123,47 @@ test("tool errors are returned as text", async () => {
   expect(await call("review_show", {})).toMatch(/No open reviews/)
 })
 
-test("registers the /address-review command", async () => {
-  const config: any = {}
-  await hooks.config!(config)
-  expect(config.command["address-review"].template).toContain("review_show")
+test("/address-review prompts the session with the user's arguments", async () => {
+  const command = commands.get("address-review")!
+  expect(command.description).toBeTruthy()
+  await command.execute({ sessionID: "s", prompt: { text: "  focus on a.txt ", files: [] }, delivery: "queue" })
+  expect(prompts).toHaveLength(1)
+  const [sent] = prompts
+  expect(sent.sessionID).toBe("s")
+  expect(sent.delivery).toBe("queue")
+  expect(sent.files).toEqual([])
+  expect(sent.text).toContain("review_show")
+  expect(sent.text).not.toContain("$ARGUMENTS")
+  expect(sent.text.endsWith("\n\nfocus on a.txt")).toBe(true)
+})
+
+test("/address-review without arguments sends just the instructions", async () => {
+  await commands.get("address-review")!.execute({ sessionID: "s", prompt: { text: "" }, delivery: "steer" })
+  expect(prompts[0].text).toEndWith("still need the reviewer.")
+})
+
+test("/address-review keeps attachments without stale text offsets", async () => {
+  const mention = { start: 2, end: 8, text: "@a.txt" }
+  await commands.get("address-review")!.execute({
+    sessionID: "s",
+    prompt: {
+      text: "  @a.txt @build @skill",
+      files: [{ uri: "file:///a.txt", mention }],
+      agents: [{ name: "build", mention }],
+      skills: [{ id: "skill", mention }],
+    },
+    delivery: "queue",
+  })
+  expect(prompts[0].files).toEqual([{ uri: "file:///a.txt" }])
+  expect(prompts[0].agents).toEqual([{ name: "build" }])
+  expect(prompts[0].skills).toEqual([{ id: "skill" }])
+})
+
+test("package.json exposes the plugin to the V2 loader", async () => {
+  const pkg = await Bun.file(new URL("../../package.json", import.meta.url)).json()
+  expect(pkg.exports["./server"]).toBe("./opencode/src/index.ts")
+  const local = await import(new URL("../../server.ts", import.meta.url).href)
+  expect(local.default).toBe(plugin)
 })
 
 test("package.json has no scripts that make npm prepare a git install", async () => {

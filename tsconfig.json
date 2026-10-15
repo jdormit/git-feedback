@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["core", "opencode"]
+  "include": ["core", "opencode", "server.ts"]
 }

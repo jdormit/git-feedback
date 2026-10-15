@@ -50,13 +50,21 @@ Staging and discarding still work while a review is shown, because the inline co
 
 ## OpenCode
 
-Add the plugin to `opencode.jsonc`:
+For OpenCode 2 (2.0.29 or later), add the plugin to `opencode.jsonc`:
 
 ```jsonc
-"plugin": ["github:jdormit/git-feedback"]
+"plugins": ["github:jdormit/git-feedback"]
 ```
 
 It gives agents `review_list`, `review_show`, `review_refresh`, `review_reply`, `review_resolve` and `review_comment`, and registers an `/address-review` command that asks the agent to work through the open threads: fix what it agrees with, reply to everything, and resolve only the threads it actually addressed. Agent comments are marked as written by an agent, so they're easy to tell apart from yours.
+
+### Using OpenCode 1.x
+
+The `v1` git tag is the last V1-compatible version. Install it with the OpenCode 1.x config key:
+
+```jsonc
+"plugin": ["github:jdormit/git-feedback#v1"]
+```
 
 ## GitHub
 
