@@ -13,6 +13,8 @@ If the `review_list`, `review_show`, `review_refresh`, `review_reply`, `review_r
 
 Otherwise, run the `fdbk` command (also available as `git feedback`). Add `--json` to any command when you need structured output.
 
+The tools only see reviews in the repository the session was started in. To work with reviews in any other repository, such as when you coordinate changes across several, use the CLI even if the tools are available, and point it at that repository with `-C`: `fdbk -C ../other-repo show`.
+
 | Task | CLI | Tool |
 | --- | --- | --- |
 | List open reviews | `fdbk list` | `review_list` |
