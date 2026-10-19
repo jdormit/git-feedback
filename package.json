@@ -34,6 +34,7 @@
   "files": [
     "core/src",
     "opencode/src",
+    "skills",
     "server.ts",
     "emacs/fdbk.el",
     "man",

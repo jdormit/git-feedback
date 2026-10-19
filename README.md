@@ -56,7 +56,7 @@ For OpenCode 2 (2.0.29 or later), add the plugin to `opencode.jsonc`:
 "plugins": ["github:jdormit/git-feedback"]
 ```
 
-It gives agents `review_list`, `review_show`, `review_refresh`, `review_reply`, `review_resolve` and `review_comment`, and registers an `/address-review` command that asks the agent to work through the open threads: fix what it agrees with, reply to everything, and resolve only the threads it actually addressed. Agent comments are marked as written by an agent, so they're easy to tell apart from yours.
+It gives agents `review_list`, `review_show`, `review_refresh`, `review_reply`, `review_resolve` and `review_comment`, and registers an `/address-review` command that asks the agent to work through the open threads: fix what it agrees with, reply to everything, and resolve only the threads it actually addressed. Agent comments are marked as written by an agent, so they're easy to tell apart from yours. The plugin also bundles the [`fdbk` agent skill](#agent-skill), so you don't need to install it separately.
 
 Agents call the review tools through `execute`, using their paths in the Code Mode catalog. `review_list` returns structured review summaries for filtering and combining results; its display text is unchanged. `review_show` returns the formatted review with code context.
 
@@ -66,6 +66,14 @@ The `v1` git tag is the last V1-compatible version. Install it with the OpenCode
 
 ```jsonc
 "plugin": ["github:jdormit/git-feedback#v1"]
+```
+
+## Agent skill
+
+[`skills/fdbk/SKILL.md`](skills/fdbk/SKILL.md) teaches coding agents to read review threads, address them, reply, and resolve only what they fixed, and to leave reviews of their own. It uses the review tools when the OpenCode plugin provides them and the `fdbk` command everywhere else, so it works in Claude Code, Codex and any other harness that supports skills. Install it with [`skills`](https://github.com/vercel-labs/skills):
+
+```sh
+npx skills add jdormit/git-feedback
 ```
 
 ## GitHub

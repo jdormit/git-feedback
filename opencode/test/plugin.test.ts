@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
 import type { Plugin } from "@opencode/plugin"
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 import { openRepo } from "../../core/src/git"
 import { addThread, startReview } from "../../core/src/review"
 import { ReviewStore } from "../../core/src/store"
@@ -8,16 +10,19 @@ import plugin from "../src/index"
 
 type ToolDef = { name: string; description: string; input: any; output?: any; options?: { codemode?: boolean }; execute: (input: any, ctx: any) => Promise<{ content?: unknown; output?: any }> }
 type CommandDef = { name: string; description?: string; execute: (input: any) => Promise<void> }
+type SkillDef = { id: string; name: string; description?: string; path: string; content: string }
 
 let repo: TestRepo
 let store: ReviewStore
 let tools: Map<string, ToolDef>
 let commands: Map<string, CommandDef>
+let skills: Map<string, SkillDef>
 let prompts: any[]
 
-async function setup(options: Record<string, unknown> = {}, directory = repo.dir) {
+async function setup(options: Record<string, unknown> = {}, directory = repo.dir, installedSkills: SkillDef[] = []) {
   tools = new Map()
   commands = new Map()
+  skills = new Map(installedSkills.map((s) => [s.id, s]))
   prompts = []
   const ctx = {
     options,
@@ -31,6 +36,12 @@ async function setup(options: Record<string, unknown> = {}, directory = repo.dir
     command: {
       transform: async (fn: (editor: any) => void) => {
         fn({ add: (c: CommandDef) => commands.set(c.name, c) })
+        return { dispose: async () => {} }
+      },
+    },
+    skill: {
+      transform: async (fn: (editor: any) => void) => {
+        fn({ add: (s: SkillDef) => skills.set(s.id, s), get: (id: string) => skills.get(id) })
         return { dispose: async () => {} }
       },
     },
@@ -71,6 +82,22 @@ test("registers every review tool with a JSON Schema input", () => {
     expect(t.options?.codemode).not.toBe(false)
   }
   expect(tools.get("review_reply")!.input.required).toEqual(["thread", "body"])
+})
+
+test("bundles the fdbk skill from skills/fdbk/SKILL.md", async () => {
+  const skill = skills.get("fdbk")!
+  const path = fileURLToPath(new URL("../../skills/fdbk/SKILL.md", import.meta.url))
+  const description = readFileSync(path, "utf8").match(/^description: (.*)$/m)![1]
+  expect(skill.path).toBe(path)
+  expect(skill.name).toBe("fdbk")
+  expect(skill.description).toBe(description)
+  expect(skill.content.startsWith("# git-feedback (fdbk)\n")).toBe(true)
+})
+
+test("an installed fdbk skill takes precedence over the bundled one", async () => {
+  const installed = { id: "fdbk", name: "fdbk", path: "/home/me/.agents/skills/fdbk/SKILL.md", content: "mine" }
+  await setup({}, repo.dir, [installed])
+  expect(skills.get("fdbk")).toBe(installed)
 })
 
 test("review_show lists unresolved threads with code context", async () => {

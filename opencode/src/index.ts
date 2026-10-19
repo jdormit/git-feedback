@@ -1,4 +1,6 @@
-import { Plugin } from "@opencode/plugin"
+import { Plugin, Skill } from "@opencode/plugin"
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 import { formatReview, summarize } from "../../core/src/format"
 import { openRepo } from "../../core/src/git"
 import { addThread, refreshReview, reply, setResolved } from "../../core/src/review"
@@ -31,6 +33,19 @@ function withoutMention<T extends { mention?: unknown }>({ mention, ...attachmen
 }
 
 type ReviewArgs = { review?: string }
+
+function loadSkill(path: string) {
+  const text = readFileSync(path, "utf8").replace(/\r\n/g, "\n")
+  const [, frontmatter = "", content = text] = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/) ?? []
+  const field = (key: string) => frontmatter.match(new RegExp(`^${key}:\\s*(.*)$`, "m"))?.[1]?.trim()
+  return Skill.Info.make({
+    id: Skill.ID.make("fdbk"),
+    name: Skill.Name.make(field("name") ?? "fdbk"),
+    description: field("description"),
+    path: Skill.Info.fields.path.make(path),
+    content: content.trim(),
+  })
+}
 
 const listOutput = {
   anyOf: [
@@ -198,6 +213,11 @@ export default Plugin.define({
           })
         },
       })
+    })
+
+    const skill = loadSkill(fileURLToPath(new URL("../../skills/fdbk/SKILL.md", import.meta.url)))
+    await ctx.skill.transform((editor) => {
+      if (!editor.get(skill.id)) editor.add(skill)
     })
 
     await ctx.command.transform((editor) => {
