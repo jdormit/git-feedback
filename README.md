@@ -44,7 +44,7 @@ Comments are marked as written by an agent when `fdbk` runs inside Claude Code, 
   :commands (fdbk-start fdbk-open fdbk-github-review fdbk-dispatch))
 ```
 
-Run `M-x fdbk-start` in any Magit diff or revision buffer to review what it shows. Threads appear under the lines they belong to, and a summary at the top lists threads that can't be placed inline, such as outdated ones and comments on the whole review. `C-c C-r` opens the review menu: comment on the line or region at point, comment on a file or the whole review, reply, edit, resolve, refresh, and push or pull GitHub comments. When an agent changes the review, the buffer redraws on its own.
+Run `M-x fdbk-start` in any Magit diff or revision buffer to review what it shows. Threads appear under the lines they belong to, and a summary at the top lists threads that can't be placed inline, such as outdated ones and comments on the whole review. `C-c C-r` opens the review menu: comment on the line or region at point, comment on a file or the whole review, reply, edit, resolve, refresh, and push or pull GitHub comments. `C-c C-n` and `C-c C-p` move to the next and previous unresolved thread; with a prefix argument they stop at resolved threads too. Threads are also listed in `imenu`. When an agent changes the review, the buffer redraws on its own.
 
 Staging and discarding still work while a review is shown, because the inline comment text is removed before Magit reads a hunk.
 

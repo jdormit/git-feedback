@@ -24,6 +24,7 @@
 (require 'seq)
 (require 'subr-x)
 (require 'filenotify)
+(require 'imenu)
 (require 'magit)
 (require 'magit-diff)
 (require 'magit-section)
@@ -223,7 +224,9 @@ Call CALLBACK with the parsed JSON output on success."
 
 (defvar-keymap fdbk-mode-map
   :doc "Keymap for `fdbk-mode'."
-  "C-c C-r" #'fdbk-dispatch)
+  "C-c C-r" #'fdbk-dispatch
+  "C-c C-n" #'fdbk-next-thread
+  "C-c C-p" #'fdbk-previous-thread)
 
 (declare-function evil-define-key* "evil-core")
 (declare-function evil-normalize-keymaps "evil-core")
@@ -265,10 +268,14 @@ Call CALLBACK with the parsed JSON output on success."
         (add-hook 'magit-refresh-buffer-hook #'fdbk--after-refresh nil t)
         (add-hook 'change-major-mode-hook #'fdbk--unwatch nil t)
         (add-hook 'kill-buffer-hook #'fdbk--unwatch nil t)
+        (add-function :around (local 'imenu-create-index-function) #'fdbk--imenu-index)
+        (setq-local imenu-auto-rescan t)
         (when (fboundp 'evil-normalize-keymaps) (evil-normalize-keymaps)))
     (remove-hook 'magit-refresh-buffer-hook #'fdbk--after-refresh t)
     (remove-hook 'change-major-mode-hook #'fdbk--unwatch t)
     (remove-hook 'kill-buffer-hook #'fdbk--unwatch t)
+    (remove-function (local 'imenu-create-index-function) #'fdbk--imenu-index)
+    (kill-local-variable 'imenu-auto-rescan)
     (fdbk--unwatch)
     (fdbk--clear-rendered)
     (setq fdbk--review nil fdbk--review-id nil fdbk--shown-revision nil fdbk--attached-spec nil)))
@@ -677,6 +684,70 @@ review's target so that its latest revision matches what is shown."
       (seq-some (lambda (ov) (overlay-get ov 'fdbk-thread))
                 (overlays-at (line-beginning-position)))))
 
+;;; Navigating threads
+
+(defun fdbk--thread-sections (&optional include-resolved)
+  "Return the thread sections in buffer order.
+Unless INCLUDE-RESOLVED, leave out resolved threads."
+  (let (sections)
+    (when magit-root-section
+      (magit-map-sections
+       (lambda (section)
+         (when (and (object-of-class-p section 'fdbk-thread-section)
+                    (or include-resolved
+                        (not (plist-get (fdbk--thread (oref section value)) :resolved))))
+           (push section sections)))))
+    (sort sections (lambda (a b) (< (oref a start) (oref b start))))))
+
+(defun fdbk--goto-thread (section)
+  "Move to the heading of thread SECTION, expanding the sections around it."
+  (let ((parent (oref section parent)))
+    (while parent
+      (when (oref parent hidden) (magit-section-show parent))
+      (setq parent (oref parent parent))))
+  (magit-section-goto section))
+
+(defun fdbk--step-thread (forward include-resolved)
+  "Move to the next thread, or the previous one unless FORWARD.
+Unless INCLUDE-RESOLVED, skip resolved threads.  Wrap around at the ends."
+  (fdbk--assert)
+  (let* ((sections (or (fdbk--thread-sections include-resolved)
+                       (user-error (if include-resolved "No review threads"
+                                     "No unresolved review threads"))))
+         (target (if forward
+                     (seq-find (lambda (s) (> (oref s start) (point))) sections)
+                   (seq-find (lambda (s) (< (oref s start) (point))) (reverse sections)))))
+    (unless target
+      (setq target (car (if forward sections (last sections))))
+      (message "Wrapped to the %s thread" (if forward "first" "last")))
+    (fdbk--goto-thread target)))
+
+(defun fdbk-next-thread (&optional include-resolved)
+  "Move to the next unresolved review thread.
+With a prefix argument INCLUDE-RESOLVED, stop at resolved threads too."
+  (interactive "P")
+  (fdbk--step-thread t include-resolved))
+
+(defun fdbk-previous-thread (&optional include-resolved)
+  "Move to the previous unresolved review thread.
+With a prefix argument INCLUDE-RESOLVED, stop at resolved threads too."
+  (interactive "P")
+  (fdbk--step-thread nil include-resolved))
+
+(defun fdbk--imenu-label (thread)
+  "Return THREAD's entry in the imenu index."
+  (format "%s — %s%s" (fdbk--location-label thread)
+          (car (split-string (or (plist-get (car (plist-get thread :comments)) :body) "") "\n"))
+          (if (plist-get thread :resolved) " [resolved]" "")))
+
+(defun fdbk--imenu-index (orig)
+  "Add a group of review threads to the imenu index made by ORIG."
+  (let ((threads (mapcar (lambda (section)
+                           (cons (fdbk--imenu-label (fdbk--thread (oref section value)))
+                                 (oref section start)))
+                         (fdbk--thread-sections t))))
+    (append (and threads (list (cons "Threads" threads))) (funcall orig))))
+
 (defun fdbk--read-thread ()
   "Return the thread id at point, or signal a user error."
   (or (fdbk--thread-id-at-point) (user-error "No review thread here")))
@@ -982,6 +1053,10 @@ EVENT is \"approve\", \"request-changes\" or \"comment\"."
     ("e" "Edit comment" fdbk-edit-comment)
     ("k" "Delete comment" fdbk-delete-comment)
     ("x" "Resolve or reopen thread" fdbk-toggle-resolved)]
+   ["Navigate"
+    :if (lambda () fdbk-mode)
+    ("n" "Next thread" fdbk-next-thread)
+    ("N" "Previous thread" fdbk-previous-thread)]
    ["Review"
     ("s" "Start or resume in this buffer" fdbk-start)
     ("o" "Open review..." fdbk-open)

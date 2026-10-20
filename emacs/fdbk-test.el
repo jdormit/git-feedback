@@ -241,6 +241,86 @@ Return to the review buffer afterwards, as a user would."
         (kill-buffer))
       (should-not (file-notify-valid-p watch)))))
 
+(defmacro fdbk-test--with-threads (&rest body)
+  "Run BODY in a review buffer with four threads, binding `ids' by body.
+In buffer order: a review comment, \"first\" and \"resolved\" in one
+hunk, and \"later\" in another hunk.  \"resolved\" is resolved."
+  (declare (indent 0))
+  `(fdbk-test--with-repo
+     (fdbk-test--write "a.txt" (replace-regexp-in-string
+                                "line 20\n" "line 20\nsecond\n"
+                                (replace-regexp-in-string "line 10\n" "line 10\nadded\n"
+                                                          (fdbk-test--lines 30))))
+     (with-current-buffer (fdbk-test--diff-buffer)
+       (fdbk-start)
+       (fdbk-test--goto-line-text "added")
+       (fdbk-test--comment "first")
+       (fdbk-test--goto-line-text "line 12")
+       (fdbk-test--comment "resolved")
+       (fdbk-test--goto-line-text "second")
+       (fdbk-test--comment "later\nmore detail")
+       (fdbk--mutate '("comment" "--body" "about the review"))
+       (let ((ids (mapcar (lambda (thread)
+                            (cons (car (split-string (plist-get (car (plist-get thread :comments)) :body) "\n"))
+                                  (plist-get thread :id)))
+                          (fdbk--threads))))
+         (fdbk--mutate (list "resolve" (alist-get "resolved" ids nil nil #'equal)))
+         ,@body))))
+
+(defun fdbk-test--thread-at-point (ids)
+  "Return the first comment of the thread at point, looked up in IDS."
+  (car (rassoc (oref (fdbk--thread-section-at-point) value) ids)))
+
+(ert-deftest fdbk-test-next-thread-skips-resolved-and-wraps ()
+  (fdbk-test--with-threads
+    (goto-char (point-min))
+    (should (equal (cl-loop repeat 4
+                            collect (progn (fdbk-next-thread)
+                                           (should (= (point) (oref (fdbk--thread-section-at-point) start)))
+                                           (fdbk-test--thread-at-point ids)))
+                   '("about the review" "first" "later" "about the review")))
+    (should (equal (cl-loop repeat 3
+                            collect (progn (fdbk-previous-thread) (fdbk-test--thread-at-point ids)))
+                   '("later" "first" "about the review")))))
+
+(ert-deftest fdbk-test-next-thread-with-prefix-includes-resolved ()
+  (fdbk-test--with-threads
+    (fdbk-test--goto-line-text "added")
+    (fdbk-next-thread '(4))
+    (should (equal (fdbk-test--thread-at-point ids) "first"))
+    (fdbk-next-thread '(4))
+    (should (equal (fdbk-test--thread-at-point ids) "resolved"))
+    (fdbk-previous-thread)
+    (should (equal (fdbk-test--thread-at-point ids) "first"))
+    (forward-line 1)
+    (fdbk-previous-thread)
+    (should (= (point) (oref (fdbk--thread-section-at-point) start)))
+    (should (equal (fdbk-test--thread-at-point ids) "first"))))
+
+(ert-deftest fdbk-test-next-thread-expands-collapsed-sections ()
+  (fdbk-test--with-threads
+    (fdbk-test--goto-line-text "second")
+    (let ((hunk (magit-current-section)))
+      (magit-section-hide hunk)
+      (fdbk-test--goto-line-text "line 12")
+      (fdbk-next-thread)
+      (should (equal (fdbk-test--thread-at-point ids) "later"))
+      (should-not (oref hunk hidden))
+      (should-not (invisible-p (point))))))
+
+(ert-deftest fdbk-test-imenu-lists-threads ()
+  (fdbk-test--with-threads
+    (let ((index (funcall imenu-create-index-function)))
+      (should (equal (mapcar #'car (alist-get "Threads" index nil nil #'equal))
+                     '("review — about the review"
+                       "a.txt:11 (new) — first"
+                       "a.txt:13 (new) — resolved [resolved]"
+                       "a.txt:22 (new) — later")))
+      (should (assoc "modified   a.txt" index)))
+    (fdbk-mode -1)
+    (should-not (assoc "Threads" (funcall imenu-create-index-function)))
+    (should-not (local-variable-p 'imenu-auto-rescan))))
+
 (ert-deftest fdbk-test-dispatch-key-wins-over-evil-bindings ()
   (skip-unless (require 'evil nil t))
   (unwind-protect
