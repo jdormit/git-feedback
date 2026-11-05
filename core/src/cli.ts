@@ -2,7 +2,7 @@
 import { existsSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { parseArgs } from "node:util"
-import { formatReview, summarize } from "./format"
+import { formatQueue, formatReview, summarize } from "./format"
 import { openRepo } from "./git"
 import { completePrRef, ghApi, githubLink, githubPull, githubPush, githubStart, parsePrRef, type GitHubApi, type ReviewEvent } from "./github"
 import {
@@ -19,6 +19,7 @@ import {
   startReview,
   type Location,
 } from "./review"
+import { buildQueue, openCodeSessions, type AgentSession } from "./queue"
 import { ReviewStore } from "./store"
 import type { Author, Side } from "./types"
 
@@ -46,6 +47,10 @@ Comments
   OpenCode or a harness that sets $AI_AGENT, authors default to that agent;
   set $FDBK_AUTHOR_KIND=human to turn this off.
 
+Queue
+  queue [--days N] [<repo dir>...]     agent work and pull requests waiting for your review
+                                       (agent sessions come from the running OpenCode service)
+
 GitHub
   github start <pr>                    review a pull request (number, owner/repo#n or URL)
   github link <pr>                     link the current review to a pull request
@@ -64,6 +69,8 @@ export interface RunContext {
   readStdin: () => Promise<string>
   /** Overrides the gh-backed client, for tests. */
   github?: GitHubApi
+  /** Overrides the OpenCode service, for tests. */
+  sessions?: () => Promise<AgentSession[]>
   env?: Record<string, string | undefined>
 }
 
@@ -85,6 +92,7 @@ const OPTIONS = {
   author: { type: "string" },
   agent: { type: "boolean" },
   event: { type: "string" },
+  days: { type: "string" },
   help: { type: "boolean", short: "h" },
 } as const
 
@@ -108,11 +116,22 @@ export async function run(argv: string[], ctx: RunContext): Promise<number> {
   }
 
   const cwd = resolve(ctx.cwd, values.directory ?? ".")
+  const env = ctx.env ?? process.env
+  const api = (host: string) => ctx.github ?? ghApi(host)
+  if (command === "queue") {
+    const repos = rest.length ? rest.map((dir) => resolve(cwd, dir)) : [cwd]
+    const queue = await buildQueue(
+      { repos, days: int(values.days, "days") },
+      { github: api, sessions: ctx.sessions ?? (() => openCodeSessions(env)) },
+    )
+    for (const warning of queue.warnings) ctx.stderr(`warning: ${warning}\n`)
+    ctx.stdout(values.json ? JSON.stringify(queue, null, 2) + "\n" : formatQueue(queue))
+    return 0
+  }
   const repo = openRepo(cwd)
   const store = new ReviewStore(repo)
   const out = (json: unknown, text: string) => ctx.stdout(values.json ? JSON.stringify(json, null, 2) + "\n" : text.endsWith("\n") ? text : text + "\n")
   const selected = () => store.select(values.review, repo.toplevel)
-  const env = ctx.env ?? process.env
   const author = (): Author => {
     const harness = env["FDBK_AUTHOR_KIND"] === "human" ? undefined : detectAgent(env)
     const kind = values.agent || env["FDBK_AUTHOR_KIND"] === "agent" || harness ? "agent" : "human"
@@ -130,7 +149,6 @@ export async function run(argv: string[], ctx: RunContext): Promise<number> {
     if (!value) throw new Error(`Missing <${name}> argument`)
     return value
   }
-  const api = (host: string) => ctx.github ?? ghApi(host)
 
   switch (command) {
     case "start": {

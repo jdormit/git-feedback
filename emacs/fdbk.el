@@ -115,9 +115,10 @@ Returns the parsed JSON output.  Signals a `user-error' on failure."
             (fdbk--parse-json (buffer-string))))
       (delete-file stderr))))
 
-(defun fdbk--call-async (args callback)
+(defun fdbk--call-async (args callback &optional on-error)
   "Run git-feedback with ARGS asynchronously.
-Call CALLBACK with the parsed JSON output on success."
+Call CALLBACK with the parsed JSON output on success, and ON-ERROR with
+the error text on failure."
   (let* ((out (generate-new-buffer " *fdbk-out*"))
          (err (generate-new-buffer " *fdbk-err*"))
          (process-environment (fdbk--process-environment)))
@@ -132,8 +133,13 @@ Call CALLBACK with the parsed JSON output on success."
          (unwind-protect
              (if (eq (process-exit-status proc) 0)
                  (funcall callback (fdbk--parse-json (with-current-buffer out (buffer-string))))
-               (message "git-feedback: %s"
-                        (string-trim (with-current-buffer err (buffer-string)))))
+               (let ((text (string-trim (with-current-buffer err (buffer-string)))))
+                 (when (string-empty-p text)
+                   (setq text (format "%s failed with exit status %d" fdbk-program
+                                      (process-exit-status proc))))
+                 (if on-error
+                     (funcall on-error text)
+                   (message "git-feedback: %s" text))))
            (kill-buffer out)
            (kill-buffer err)))))))
 

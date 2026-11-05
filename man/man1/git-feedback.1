@@ -113,6 +113,23 @@ Import new comments, edits and resolution changes.
 .TP
 \fBgithub push\fR [\fB\-\-event approve\fR|\fBrequest\-changes\fR|\fBcomment\fR] [\fB\-\-body\fR \fItext\fR]
 Submit new comments as a review, and send replies, edits and resolution changes.
+.SH QUEUE COMMAND
+.TP
+\fBqueue\fR [\fB\-\-days\fR \fIn\fR] [\fIdir\fR...]
+List what is waiting for your review in each local clone
+.I dir
+(default: the current repository).
+Agent work is a worktree with changes against the default branch where an
+OpenCode session was active in the last
+.I n
+days (default 7), or an open review whose code changed or where an agent
+replied to an unresolved thread.
+Pull requests are the open, non-draft pull requests by other people, with
+whether your review or your team's is requested, whether you reviewed an
+older commit, and how many of the changed files you committed to in the last
+90 days.
+Agent sessions come from the running OpenCode service; without one, only
+reviews and pull requests are listed.
 .SH COMMON OPTIONS
 .TP
 .BI \-C " dir"

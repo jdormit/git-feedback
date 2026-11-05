@@ -40,13 +40,28 @@ Comments are marked as written by an agent when `fdbk` runs inside Claude Code, 
 
 ```elisp
 (use-package fdbk
-  :straight (fdbk :host github :repo "jdormit/git-feedback" :files ("emacs/fdbk.el"))
-  :commands (fdbk-start fdbk-open fdbk-github-review fdbk-dispatch))
+  :straight (fdbk :host github :repo "jdormit/git-feedback" :files ("emacs/fdbk.el" "emacs/fdbk-queue.el"))
+  :commands (fdbk-start fdbk-open fdbk-github-review fdbk-dispatch fdbk-queue))
 ```
 
 Run `M-x fdbk-start` in any Magit diff or revision buffer to review what it shows. Threads appear under the lines they belong to, and a summary at the top lists threads that can't be placed inline, such as outdated ones and comments on the whole review. `C-c C-r` opens the review menu: comment on the line or region at point, comment on a file or the whole review, reply, edit, resolve, refresh, and push or pull GitHub comments. `C-c C-n` and `C-c C-p` move to the next and previous unresolved thread; with a prefix argument they stop at resolved threads too. Threads are also listed in `imenu`. When an agent changes the review, the buffer redraws on its own.
 
 Staging and discarding still work while a review is shown, because the inline comment text is removed before Magit reads a hunk.
+
+### Review queue
+
+[`emacs/fdbk-queue.el`](emacs/fdbk-queue.el) lists what is waiting for your review, using `fdbk queue --json`:
+
+- **Agent work:** worktrees with changes from a recent OpenCode session that you haven't reviewed, and open reviews whose code changed or where an agent replied to you.
+- **Pull requests** by other people, grouped into re-reviews, ones requested from you, ones for your team, and everything else.
+
+Within each group, items are ordered by `fdbk-queue-weights`, and each row lists the signals that put it there, such as "requested from your team · 3 files you changed recently".
+
+```elisp
+(setq fdbk-queue-repositories '("~/src/app" "~/src/infra"))
+```
+
+`M-x fdbk-queue` shows the last results and refreshes in the background. On an item, `RET` starts or resumes a review, `d` shows agent work's diff without one, `o` opens the pull request, `a` jumps to the agent's OpenCode session, `m` opens Magit, and `x` dismisses the item until it changes. `g` refreshes.
 
 ## OpenCode
 

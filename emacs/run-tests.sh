@@ -23,8 +23,8 @@ cd "$sandbox"
 # shellcheck disable=SC2086
 HOME="$sandbox" "$emacs" -Q --batch $load_path -L "$here" \
   --eval '(setq byte-compile-error-on-warn t)' \
-  -f batch-byte-compile "$here/fdbk.el"
+  -f batch-byte-compile "$here/fdbk.el" "$here/fdbk-queue.el"
 # shellcheck disable=SC2086
 HOME="$sandbox" "$emacs" -Q --batch $load_path -L "$here" \
-  -l "$here/fdbk.el" -l "$here/fdbk-test.el" \
+  -l "$here/fdbk.el" -l "$here/fdbk-test.el" -l "$here/fdbk-queue-test.el" \
   --eval "(ert-run-tests-batch-and-exit \"${1:-^fdbk-test}\")" </dev/null

@@ -37,6 +37,7 @@
     "skills",
     "server.ts",
     "emacs/fdbk.el",
+    "emacs/fdbk-queue.el",
     "man",
     "README.md"
   ]

@@ -1,4 +1,5 @@
 import { readLines } from "./git"
+import type { AgentItem, PullRequestItem, Queue } from "./queue"
 import { latestRevision, revisionByNumber } from "./review"
 import type { Review, Thread } from "./types"
 
@@ -102,4 +103,41 @@ export function formatReview(review: Review, opts: FormatOptions = {}): string {
     `${shown.length} thread(s) shown${hidden ? `, ${hidden} resolved hidden` : ""}.`,
   ]
   return [header.join("\n"), ...shown.map((t) => formatThread(review, t, opts.context))].join("\n\n") + "\n"
+}
+
+const STATE_LABELS: Record<AgentItem["state"] | PullRequestItem["state"], string> = {
+  unreviewed: "new",
+  "changed-since-review": "changed since your review",
+  "agent-replied": "agent replied",
+  reviewed: "reviewed",
+}
+
+function sizeLabel({ additions, deletions }: { additions: number; deletions: number }) {
+  return `+${additions} -${deletions}`
+}
+
+function formatAgentItem(item: AgentItem): string {
+  const notes = [STATE_LABELS[item.state], item.branch ?? item.dir, sizeLabel(item.size)]
+  if (item.running) notes.push("agent still running")
+  return `  ${item.title}\n    ${notes.join(" · ")}`
+}
+
+function formatPullRequest(item: PullRequestItem): string {
+  const notes = [`${item.repo}#${item.number} by ${item.author}`, STATE_LABELS[item.state], sizeLabel(item.size)]
+  if (item.requested) notes.push(`requested from ${item.requested === "you" ? "you" : "your team"}`)
+  if (item.authorOnTeam) notes.push("teammate")
+  if (item.familiarFiles) notes.push(`${item.familiarFiles} file(s) you changed recently`)
+  if (item.approvals) notes.push(`${item.approvals} approval(s)`)
+  return `  ${item.title}\n    ${notes.join(" · ")}`
+}
+
+export function formatQueue(queue: Queue): string {
+  const agents = queue.items.filter((i): i is AgentItem => i.kind === "agent")
+  const prs = queue.items.filter((i): i is PullRequestItem => i.kind === "pull-request")
+  if (!agents.length && !prs.length) return "Nothing to review.\n"
+  const sections = [
+    agents.length ? `Agent work (${agents.length})\n${agents.map(formatAgentItem).join("\n")}` : "",
+    prs.length ? `Pull requests (${prs.length})\n${prs.map(formatPullRequest).join("\n")}` : "",
+  ]
+  return sections.filter(Boolean).join("\n\n") + "\n"
 }
