@@ -12,6 +12,8 @@
 ;; by why they need you and ordered by `fdbk-queue-weights'.  From the
 ;; list you can start or resume a git-feedback review of an item, look
 ;; at its diff, open the pull request or jump to the agent's session.
+;; As in Dired, `d' and `z' flag items to dismiss or snooze and `x'
+;; acts on the flags.  `?' shows every command.
 ;;
 ;; The data comes from `fdbk queue --json'.
 
@@ -21,6 +23,7 @@
 (require 'seq)
 (require 'subr-x)
 (require 'magit-section)
+(require 'transient)
 (require 'fdbk)
 
 (declare-function opencode-open-session-by-id "emacs-opencode")
@@ -61,9 +64,14 @@ Items are ordered by score within their group.  `familiar-file',
   :type 'natnum
   :group 'fdbk)
 
-(defcustom fdbk-queue-dismissed-file (locate-user-emacs-file "fdbk-queue-dismissed.eld")
-  "File remembering items you dismissed from the queue."
+(defcustom fdbk-queue-hidden-file (locate-user-emacs-file "fdbk-queue-hidden.eld")
+  "File remembering items you dismissed or snoozed."
   :type 'file
+  :group 'fdbk)
+
+(defface fdbk-queue-flagged
+  '((t :inherit error))
+  "Face for the flag of an item about to be dismissed or snoozed."
   :group 'fdbk)
 
 (defface fdbk-queue-reason
@@ -87,8 +95,13 @@ Items are ordered by score within their group.  `familiar-file',
 (defvar fdbk-queue--refreshing nil
   "Non-nil while a refresh is running.")
 
-(defvar fdbk-queue--dismissed nil
-  "Alist of dismissed item ids and the item version they were dismissed at.")
+(defvar fdbk-queue--hidden nil
+  "Alist of hidden item ids and why they are hidden.
+Each value is (dismissed VERSION), hiding the item until its version
+changes, or (snoozed UNTIL), hiding it until the time UNTIL.")
+
+(defvar-local fdbk-queue--flags nil
+  "Alist of item ids flagged in this buffer and the action, `dismiss' or `snooze'.")
 
 (defconst fdbk-queue--buffer-name "*fdbk-queue*")
 
@@ -98,6 +111,7 @@ Items are ordered by score within their group.  `familiar-file',
     (requested "Requested from you")
     (team "Your team")
     (other "Everything else" t)
+    (snoozed "Snoozed" t)
     (dismissed "Dismissed" t))
   "Groups in display order: (KEY TITLE HIDDEN).")
 
@@ -143,32 +157,53 @@ LABEL is nil for signals that are not worth showing."
   "Return the labels explaining why ITEM is in the queue."
   (delq nil (mapcar #'caddr (fdbk-queue--signals item))))
 
-;;; Dismissing
+;;; Hiding
 
-(defun fdbk-queue--load-dismissed ()
-  "Read `fdbk-queue--dismissed' from `fdbk-queue-dismissed-file'."
-  (setq fdbk-queue--dismissed
-        (when (file-readable-p fdbk-queue-dismissed-file)
+(defun fdbk-queue--load-hidden ()
+  "Read `fdbk-queue--hidden' from `fdbk-queue-hidden-file'."
+  (setq fdbk-queue--hidden
+        (when (file-readable-p fdbk-queue-hidden-file)
           (with-temp-buffer
-            (insert-file-contents fdbk-queue-dismissed-file)
+            (insert-file-contents fdbk-queue-hidden-file)
             (ignore-errors (read (current-buffer)))))))
 
-(defun fdbk-queue--save-dismissed ()
-  "Write `fdbk-queue--dismissed' to `fdbk-queue-dismissed-file'."
-  (with-temp-file fdbk-queue-dismissed-file
+(defun fdbk-queue--save-hidden ()
+  "Write `fdbk-queue--hidden' to `fdbk-queue-hidden-file'."
+  (with-temp-file fdbk-queue-hidden-file
     (let ((print-length nil) (print-level nil))
-      (prin1 fdbk-queue--dismissed (current-buffer)))))
+      (prin1 fdbk-queue--hidden (current-buffer)))))
 
 (defun fdbk-queue--dismissed-p (item)
   "Return non-nil if ITEM was dismissed and has not changed since."
-  (equal (alist-get (plist-get item :id) fdbk-queue--dismissed nil nil #'equal)
-         (plist-get item :version)))
+  (pcase (alist-get (plist-get item :id) fdbk-queue--hidden nil nil #'equal)
+    (`(dismissed ,version) (equal version (plist-get item :version)))))
+
+(defun fdbk-queue--snoozed-until (item)
+  "Return the time ITEM is snoozed until, or nil if it is not snoozed."
+  (pcase (alist-get (plist-get item :id) fdbk-queue--hidden nil nil #'equal)
+    (`(snoozed ,until) (and (time-less-p nil until) until))))
+
+(defun fdbk-queue--hide (item how)
+  "Hide ITEM.  HOW is (dismissed VERSION) or (snoozed UNTIL), or nil to show it."
+  (setf (alist-get (plist-get item :id) fdbk-queue--hidden nil t #'equal) how))
+
+(defun fdbk-queue--parse-duration (string)
+  "Return the seconds in STRING, such as \"30m\", \"4h\", \"2d\" or \"1w\"."
+  (unless (string-match "\\`\\s-*\\([0-9]+\\)\\s-*\\([mhdw]\\)\\s-*\\'" string)
+    (user-error "Durations look like 30m, 4h, 2d or 1w"))
+  (* (string-to-number (match-string 1 string))
+     (pcase (match-string 2 string) ("m" 60) ("h" 3600) ("d" 86400) ("w" 604800))))
+
+(defun fdbk-queue--flag-of (item)
+  "Return the action ITEM is flagged for in this buffer, if any."
+  (alist-get (plist-get item :id) fdbk-queue--flags nil nil #'equal))
 
 ;;; Rendering
 
 (defun fdbk-queue--group (item)
   "Return the key of the group ITEM belongs in."
   (cond ((fdbk-queue--dismissed-p item) 'dismissed)
+        ((fdbk-queue--snoozed-until item) 'snoozed)
         ((equal (plist-get item :kind) "agent") 'agent)
         ((equal (plist-get item :state) "changed-since-review") 're-review)
         ((equal (plist-get item :requested) "you") 'requested)
@@ -208,11 +243,14 @@ LABEL is nil for signals that are not worth showing."
 (defvar-keymap fdbk-queue-item-section-map
   :doc "Keymap for an item in the review queue."
   "RET" #'fdbk-queue-review
-  "d" #'fdbk-queue-diff
+  "=" #'fdbk-queue-diff
   "o" #'fdbk-queue-browse
   "a" #'fdbk-queue-agent-session
   "m" #'fdbk-queue-magit-status
-  "x" #'fdbk-queue-dismiss)
+  "d" #'fdbk-queue-flag-dismiss
+  "z" #'fdbk-queue-flag-snooze
+  "u" #'fdbk-queue-unflag
+  "r" #'fdbk-queue-restore)
 
 (defclass fdbk-queue-item-section (magit-section)
   ((keymap :initform 'fdbk-queue-item-section-map))
@@ -224,9 +262,15 @@ LABEL is nil for signals that are not worth showing."
 (defun fdbk-queue--insert-item (item)
   "Insert a line for ITEM."
   (magit-insert-section (fdbk-queue-item-section item)
-    (insert (truncate-string-to-width (plist-get item :title) 60 nil ?\s "…")
+    (insert (pcase (fdbk-queue--flag-of item)
+              ('dismiss (propertize "D" 'font-lock-face 'fdbk-queue-flagged))
+              ('snooze (propertize "Z" 'font-lock-face 'fdbk-queue-flagged))
+              (_ " "))
+            " " (truncate-string-to-width (plist-get item :title) 60 nil ?\s "…")
             "  " (propertize (fdbk-queue--detail item) 'font-lock-face 'fdbk-queue-detail))
-    (when-let* ((labels (fdbk-queue--labels item)))
+    (when-let* ((labels (append (when-let* ((until (fdbk-queue--snoozed-until item)))
+                                  (list (format-time-string "snoozed until %a %-d %b %H:%M" until)))
+                                (fdbk-queue--labels item))))
       (insert "  " (propertize (string-join labels " · ") 'font-lock-face 'fdbk-queue-reason)))
     (insert "\n")))
 
@@ -259,6 +303,11 @@ Leave point on the item with id AT, or the item at point before."
                      (mapcar (lambda (s) (cons (oref s value) (oref s hidden)))
                              (oref magit-root-section children))))
         (groups (seq-group-by #'fdbk-queue--group (plist-get fdbk-queue--data :items))))
+    (setq fdbk-queue--flags
+          (seq-filter (lambda (flag)
+                        (seq-find (lambda (item) (equal (plist-get item :id) (car flag)))
+                                  (plist-get fdbk-queue--data :items)))
+                      fdbk-queue--flags))
     (erase-buffer)
     (magit-insert-section (fdbk-queue-root)
       (fdbk-queue--insert-header)
@@ -284,14 +333,22 @@ Leave point on the item with id AT, or the item at point before."
 ;;; Commands
 
 (defun fdbk-queue--receive (data)
-  "Show DATA from `fdbk queue --json' and forget dismissals of items now gone."
-  (let ((ids (mapcar (lambda (item) (plist-get item :id)) (plist-get data :items))))
+  "Show DATA from `fdbk queue --json'.
+Forget hidden items that changed or are no longer snoozed, and items
+that are gone unless DATA has warnings, which may mean they are missing."
+  (let ((items (plist-get data :items))
+        (complete (not (plist-get data :warnings))))
     (setq fdbk-queue--data data
           fdbk-queue--error nil
           fdbk-queue--refreshing nil
-          fdbk-queue--dismissed (seq-filter (lambda (entry) (member (car entry) ids))
-                                            fdbk-queue--dismissed))
-    (fdbk-queue--save-dismissed)
+          fdbk-queue--hidden
+          (seq-filter (lambda (entry)
+                        (if-let* ((item (seq-find (lambda (i) (equal (plist-get i :id) (car entry)))
+                                                  items)))
+                            (memq (fdbk-queue--group item) '(dismissed snoozed))
+                          (not complete)))
+                      fdbk-queue--hidden))
+    (fdbk-queue--save-hidden)
     (fdbk-queue--render-buffer)))
 
 (defun fdbk-queue--fail (error)
@@ -375,24 +432,130 @@ the background."
                     (cdar choices))))
     (opencode-open-session-by-id (plist-get session :id) (plist-get session :directory))))
 
-(defun fdbk-queue-dismiss ()
-  "Hide the item at point until it changes, or bring back a dismissed item."
+(defun fdbk-queue--forward-item ()
+  "Move to the next visible item, if there is one."
+  (let ((start (point)))
+    (condition-case nil
+        (progn (magit-section-forward)
+               (while (not (cl-typep (magit-current-section) 'fdbk-queue-item-section))
+                 (magit-section-forward)))
+      (user-error (goto-char start)))))
+
+(defun fdbk-queue--set-flag (action)
+  "Flag the item at point for ACTION, or unflag it if ACTION is nil, and move on."
+  (let ((id (plist-get (fdbk-queue--item-at-point) :id)))
+    (setf (alist-get id fdbk-queue--flags nil t #'equal) action)
+    (fdbk-queue--render id)
+    (fdbk-queue--forward-item)))
+
+(defun fdbk-queue-flag-dismiss ()
+  "Flag the item at point to be dismissed until it changes.
+\\<fdbk-queue-mode-map>\\[fdbk-queue-execute] dismisses flagged items."
+  (interactive)
+  (fdbk-queue--set-flag 'dismiss))
+
+(defun fdbk-queue-flag-snooze ()
+  "Flag the item at point to be snoozed.
+\\<fdbk-queue-mode-map>\\[fdbk-queue-execute] snoozes flagged items."
+  (interactive)
+  (fdbk-queue--set-flag 'snooze))
+
+(defun fdbk-queue-unflag ()
+  "Remove the flag from the item at point and move on."
+  (interactive)
+  (fdbk-queue--set-flag nil))
+
+(defun fdbk-queue-unflag-all ()
+  "Remove every flag."
+  (interactive)
+  (setq fdbk-queue--flags nil)
+  (fdbk-queue--render))
+
+(defun fdbk-queue--next-unflagged ()
+  "Return the id of the first unflagged item at or after point."
+  (save-excursion
+    (catch 'found
+      (while t
+        (let ((section (magit-current-section)))
+          (when (and (cl-typep section 'fdbk-queue-item-section)
+                     (not (fdbk-queue--flag-of (oref section value))))
+            (throw 'found (plist-get (oref section value) :id))))
+        (condition-case nil (magit-section-forward) (user-error (throw 'found nil)))))))
+
+(defun fdbk-queue-execute ()
+  "Dismiss and snooze the flagged items, after asking."
+  (interactive)
+  (let* ((flagged (lambda (action)
+                    (seq-filter (lambda (item) (eq (fdbk-queue--flag-of item) action))
+                                (plist-get fdbk-queue--data :items))))
+         (dismiss (funcall flagged 'dismiss))
+         (snooze (funcall flagged 'snooze))
+         (plural (lambda (items) (format "%d item%s" (length items) (if (cdr items) "s" "")))))
+    (unless (or dismiss snooze) (user-error "No flagged items"))
+    (when (or (not dismiss)
+              (y-or-n-p (format "Dismiss %s until %s? " (funcall plural dismiss)
+                                (if (cdr dismiss) "they change" "it changes"))))
+      (let ((until (when snooze
+                     (time-add nil (fdbk-queue--parse-duration
+                                    (read-string (format-prompt "Snooze %s for (30m, 4h, 2d, 1w)" "1d"
+                                                                (funcall plural snooze))
+                                                 nil nil "1d"))))))
+        (let ((at (fdbk-queue--next-unflagged)))
+          (dolist (item dismiss)
+            (fdbk-queue--hide item (list 'dismissed (plist-get item :version))))
+          (dolist (item snooze)
+            (fdbk-queue--hide item (list 'snoozed (time-convert until 'integer))))
+          (setq fdbk-queue--flags
+                (seq-remove (lambda (flag)
+                              (seq-find (lambda (item) (equal (plist-get item :id) (car flag)))
+                                        (append dismiss snooze)))
+                            fdbk-queue--flags))
+          (fdbk-queue--save-hidden)
+          (fdbk-queue--render at))))))
+
+(defun fdbk-queue-restore ()
+  "Bring back the dismissed or snoozed item at point."
   (interactive)
   (let* ((item (fdbk-queue--item-at-point))
-         (id (plist-get item :id))
          (section (magit-current-section))
          (next (or (car (magit-section-siblings section 'next))
                    (car (magit-section-siblings section 'prev)))))
-    (setf (alist-get id fdbk-queue--dismissed nil t #'equal)
-          (unless (fdbk-queue--dismissed-p item) (plist-get item :version)))
-    (fdbk-queue--save-dismissed)
+    (unless (memq (fdbk-queue--group item) '(dismissed snoozed))
+      (user-error "This item is not dismissed or snoozed"))
+    (fdbk-queue--hide item nil)
+    (fdbk-queue--save-hidden)
     (fdbk-queue--render (and next (plist-get (oref next value) :id)))))
+
+;;; Transient
+
+;;;###autoload (autoload 'fdbk-queue-dispatch "fdbk-queue" nil t)
+(transient-define-prefix fdbk-queue-dispatch ()
+  "Review queue commands."
+  [["Item"
+    ("RET" "Review" fdbk-queue-review)
+    ("=" "Diff agent work" fdbk-queue-diff)
+    ("o" "Open pull request" fdbk-queue-browse)
+    ("a" "Agent session" fdbk-queue-agent-session)
+    ("m" "Magit status" fdbk-queue-magit-status)]
+   ["Flag"
+    ("d" "Flag to dismiss" fdbk-queue-flag-dismiss)
+    ("z" "Flag to snooze" fdbk-queue-flag-snooze)
+    ("u" "Unflag" fdbk-queue-unflag)
+    ("U" "Unflag all" fdbk-queue-unflag-all)
+    ("x" "Dismiss and snooze flagged" fdbk-queue-execute)
+    ("r" "Restore dismissed or snoozed" fdbk-queue-restore)]
+   ["Queue"
+    ("g" "Refresh" fdbk-queue-refresh)
+    ("q" "Quit" quit-window)]])
 
 ;;; Mode
 
 (defvar-keymap fdbk-queue-mode-map
   :doc "Keymap for `fdbk-queue-mode'."
   :parent magit-section-mode-map
+  "?" #'fdbk-queue-dispatch
+  "x" #'fdbk-queue-execute
+  "U" #'fdbk-queue-unflag-all
   "g" #'fdbk-queue-refresh
   "q" #'quit-window)
 
@@ -402,7 +565,7 @@ the background."
 On an item:
 \\{fdbk-queue-item-section-map}"
   (setq-local truncate-lines t)
-  (unless fdbk-queue--dismissed (fdbk-queue--load-dismissed)))
+  (unless fdbk-queue--hidden (fdbk-queue--load-hidden)))
 
 (declare-function evil-define-key* "evil-core")
 (declare-function evil-set-initial-state "evil-core")
@@ -411,6 +574,9 @@ On an item:
   (evil-set-initial-state 'fdbk-queue-mode 'motion)
   (evil-define-key* 'motion fdbk-queue-mode-map
     (kbd "TAB") #'magit-section-toggle
+    "?" #'fdbk-queue-dispatch
+    "x" #'fdbk-queue-execute
+    "U" #'fdbk-queue-unflag-all
     "gr" #'fdbk-queue-refresh
     "q" #'quit-window))
 

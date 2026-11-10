@@ -61,7 +61,9 @@ Within each group, items are ordered by `fdbk-queue-weights`, and each row lists
 (setq fdbk-queue-repositories '("~/src/app" "~/src/infra"))
 ```
 
-`M-x fdbk-queue` shows the last results and refreshes in the background. On an item, `RET` starts or resumes a review, `d` shows agent work's diff without one, `o` opens the pull request, `a` jumps to the agent's OpenCode session, `m` opens Magit, and `x` dismisses the item until it changes. `g` refreshes.
+`M-x fdbk-queue` shows the last results and refreshes in the background. On an item, `RET` starts or resumes a review, `=` shows agent work's diff without one, `o` opens the pull request, `a` jumps to the agent's OpenCode session, and `m` opens Magit. `g` refreshes and `?` shows every command.
+
+Hiding items works like deleting files in Dired: `d` flags an item to dismiss until its code changes, `z` flags it to snooze for a while, `u` and `U` remove flags, and `x` dismisses and snoozes the flagged items. Hidden items are listed in the Snoozed and Dismissed groups, where `r` brings one back.
 
 ## OpenCode
 
