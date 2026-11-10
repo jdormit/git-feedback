@@ -318,5 +318,6 @@ if (import.meta.main) {
     process.stderr.write(`fdbk: ${e.message}\n`)
     return 1
   })
-  process.exit(code)
+  // process.exit would drop output still buffered for a pipe.
+  process.exitCode = code
 }

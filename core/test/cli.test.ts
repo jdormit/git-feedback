@@ -88,3 +88,17 @@ test("explicit author settings override agent detection", async () => {
   expect(await authorFor({ OPENCODE: "1", FDBK_AUTHOR: "bot" })).toEqual({ name: "bot", kind: "agent" })
   expect(await authorFor({ OPENCODE: "1" }, ["--author", "me"])).toEqual({ name: "me", kind: "agent" })
 })
+
+test("output larger than a pipe buffer reaches a reader in full", async () => {
+  const cli = new URL("../src/cli.ts", import.meta.url).pathname
+  await fdbk(["start"])
+  await fdbk(["comment", "--body", "x".repeat(100_000)])
+  // The reader starts late, so the CLI fills the pipe and has to wait for it to drain before exiting.
+  const proc = Bun.spawn(["sh", "-c", `"$0" "$1" show --json --no-refresh | (sleep 0.5; cat)`, process.execPath, cli], {
+    cwd: repo.dir,
+    stdout: "pipe",
+  })
+  const out = await new Response(proc.stdout).text()
+  await proc.exited
+  expect(JSON.parse(out).threads[0].comments[0].body).toHaveLength(100_000)
+})
