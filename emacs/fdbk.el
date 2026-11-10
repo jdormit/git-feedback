@@ -21,6 +21,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'color)
 (require 'seq)
 (require 'subr-x)
 (require 'filenotify)
@@ -45,39 +46,61 @@
 Useful when `fdbk-program' is an interpreter such as bun."
   :type '(repeat string))
 
+(defcustom fdbk-fill-column 80
+  "Wrap comment lines longer than this many columns, or nil to never wrap."
+  :type '(choice (const :tag "Don't wrap" nil) integer))
+
+(defcustom fdbk-thread-tint 0.12
+  "How strongly thread backgrounds are tinted with the thread's bar color.
+A fraction from 0 to 1; headings get twice as much.  nil leaves the
+background alone."
+  :type '(choice (const :tag "No tint" nil) number))
+
 (defface fdbk-heading
-  '((t :inherit magit-section-heading
-       :weight bold
-       :box (:line-width (1 . 1) :style released-button)))
-  "Face for review thread headings.")
+  '((t :inherit magit-section-heading :weight bold))
+  "Face for review and thread headings.")
 
 (defface fdbk-comment-text
-  '((((class color) (background light))
-     :inherit default :background "#f0f4ff" :foreground "#1f2a44" :extend t)
-    (((class color) (background dark))
-     :inherit default :background "#1b2538" :foreground "#d7e3ff" :extend t)
-    (t :inherit default :inverse-video t))
+  '((t))
   "Face for review comment bodies.")
 
 (defface fdbk-comment-heading
-  '((((class color) (background light))
-     :inherit fdbk-comment-text :background "#dbe7ff" :foreground "#0f2f66" :weight bold :extend t)
-    (((class color) (background dark))
-     :inherit fdbk-comment-text :background "#243655" :foreground "#ffffff" :weight bold :extend t)
-    (t :inherit fdbk-comment-text :weight bold))
-  "Face for the author line of a review comment.")
+  '((t :inherit fdbk-comment-text :weight bold))
+  "Face for the author of a review comment.")
+
+(defface fdbk-comment-meta
+  '((t :inherit shadow))
+  "Face for comment timestamps.")
 
 (defface fdbk-resolved
-  '((t :inherit shadow :extend t))
+  '((t :inherit shadow))
   "Face for resolved threads.")
+
+(defface fdbk-thread-bar
+  '((t :inherit font-lock-keyword-face :weight normal :slant normal))
+  "Face for the bar beside unresolved threads.
+Its color also tints the thread's background and borders.")
+
+(defface fdbk-thread-bar-resolved
+  '((t :inherit shadow))
+  "Face for the bar beside resolved threads.")
+
+(defface fdbk-status-unresolved
+  '((t :inherit fdbk-thread-bar :weight bold))
+  "Face for the \"unresolved\" status in thread headings.")
+
+(defface fdbk-status-resolved
+  '((t :inherit success :weight bold))
+  "Face for the \"resolved\" status in thread headings.")
 
 (defface fdbk-label
   '((t :inherit warning :weight bold))
   "Face for status labels such as \"outdated\" and \"pending\".")
 
 (defface fdbk-commented-line
-  '((t :inherit highlight :extend t))
-  "Face for diff lines that have an unresolved thread.")
+  '((t))
+  "Face for diff lines that have an unresolved thread.
+They also get a bar in the left fringe.")
 
 ;;; Command-line tool
 
@@ -203,9 +226,6 @@ the error text on failure."
 (defvar-local fdbk--watch-timer nil
   "Timer that debounces re-rendering after the review file changes.")
 
-(defvar-local fdbk--overlays nil
-  "Line highlight overlays added by fdbk.")
-
 (defun fdbk--review-arg ()
   "Return the --review argument for the review in this buffer."
   (list "--review" fdbk--review-id))
@@ -273,12 +293,14 @@ the error text on failure."
       (progn
         (add-hook 'magit-refresh-buffer-hook #'fdbk--after-refresh nil t)
         (add-hook 'change-major-mode-hook #'fdbk--unwatch nil t)
+        (add-hook 'change-major-mode-hook #'fdbk--remove-overlays nil t)
         (add-hook 'kill-buffer-hook #'fdbk--unwatch nil t)
         (add-function :around (local 'imenu-create-index-function) #'fdbk--imenu-index)
         (setq-local imenu-auto-rescan t)
         (when (fboundp 'evil-normalize-keymaps) (evil-normalize-keymaps)))
     (remove-hook 'magit-refresh-buffer-hook #'fdbk--after-refresh t)
     (remove-hook 'change-major-mode-hook #'fdbk--unwatch t)
+    (remove-hook 'change-major-mode-hook #'fdbk--remove-overlays t)
     (remove-hook 'kill-buffer-hook #'fdbk--unwatch t)
     (remove-function (local 'imenu-create-index-function) #'fdbk--imenu-index)
     (kill-local-variable 'imenu-auto-rescan)
@@ -492,10 +514,23 @@ Magit refreshes the buffer after applying, which renders the review again."
 
 ;;; Rendering
 
+(defun fdbk--overlay (beg end &rest props)
+  "Make an overlay from BEG to END with PROPS that `fdbk--remove-overlays' removes."
+  (let ((ov (make-overlay beg end)))
+    (overlay-put ov 'fdbk t)
+    (cl-loop for (prop value) on props by #'cddr
+             do (overlay-put ov prop value))
+    ov))
+
+(defun fdbk--remove-overlays ()
+  "Delete every overlay fdbk added to the buffer."
+  (save-restriction
+    (widen)
+    (remove-overlays (point-min) (point-max) 'fdbk t)))
+
 (defun fdbk--clear-rendered ()
   "Delete all inserted review text and overlays."
-  (mapc #'delete-overlay fdbk--overlays)
-  (setq fdbk--overlays nil)
+  (fdbk--remove-overlays)
   (when magit-root-section
     (fdbk--prune-sections magit-root-section))
   (let ((inhibit-read-only t))
@@ -519,9 +554,20 @@ Magit refreshes the buffer after applying, which renders the review again."
       (let ((pos (point-min)))
         (while-let ((beg (text-property-not-all pos (point-max) 'fdbk-face nil)))
           (setq pos (or (next-single-property-change beg 'fdbk-face) (point-max)))
-          (put-text-property beg pos 'face (get-text-property beg 'fdbk-face)))))))
+          (put-text-property beg pos 'font-lock-face (get-text-property beg 'fdbk-face)))))))
 
 (advice-add 'magit-section-paint :after #'fdbk--apply-faces)
+
+(defun fdbk--redraw-all (&rest _)
+  "Redraw every review, so that thread colors follow the current theme."
+  (dolist (buffer (buffer-list))
+    (with-current-buffer buffer
+      (when (and (bound-and-true-p fdbk-mode) fdbk--review)
+        (with-demoted-errors "fdbk: %S"
+          (fdbk--draw fdbk--review))))))
+
+(add-hook 'enable-theme-functions #'fdbk--redraw-all)
+(add-hook 'disable-theme-functions #'fdbk--redraw-all)
 
 (cl-defmethod magit-section-highlight ((_section fdbk-thread-section))
   "Keep review faces intact when point enters a thread."
@@ -531,9 +577,92 @@ Magit refreshes the buffer after applying, which renders the review again."
   "Keep review faces intact when point enters the summary."
   (fdbk--apply-faces))
 
+(defun fdbk--span (text face)
+  "Return TEXT drawn with FACE."
+  (propertize text 'font-lock-face face 'fdbk-face face))
+
 (defun fdbk--line (text face &rest props)
-  "Return TEXT as a full rendered line with FACE and PROPS."
-  (apply #'propertize (concat text "\n") 'face face 'fdbk-face face props))
+  "Return TEXT as a full rendered line with FACE and PROPS.
+Spans of TEXT that already have a face keep it."
+  (let ((line (concat text "\n"))
+        (pos 0))
+    (while (< pos (length line))
+      (let ((next (or (next-single-property-change pos 'fdbk-face line) (length line))))
+        (unless (get-text-property pos 'fdbk-face line)
+          (add-text-properties pos next (list 'font-lock-face face 'fdbk-face face) line))
+        (setq pos next)))
+    (when props
+      (add-text-properties 0 (length line) props line))
+    line))
+
+(defun fdbk--blend (color base alpha)
+  "Return COLOR mixed into BASE by ALPHA as a hex string.
+Return nil if either color is unknown, as on terminals without colors."
+  (when-let* ((a (and color (color-name-to-rgb color)))
+              (b (and base (color-name-to-rgb base))))
+    (apply #'color-rgb-to-hex (append (color-blend a b alpha) '(2)))))
+
+(defun fdbk--thread-style (thread)
+  "Return the faces THREAD is drawn with, as a plist."
+  (let* ((resolved (plist-get thread :resolved))
+         (bar (if resolved 'fdbk-thread-bar-resolved 'fdbk-thread-bar))
+         (base (if resolved 'fdbk-resolved 'fdbk-comment-text))
+         (accent (face-foreground bar nil t))
+         (background (face-background 'default nil t)))
+    (cl-flet ((tint (alpha)
+                (when-let* ((color (and alpha (fdbk--blend accent background alpha))))
+                  `((:background ,color :extend t))))
+              (rule (alpha)
+                (when-let* (((display-graphic-p))
+                            (color (fdbk--blend accent background alpha)))
+                  `(:background ,color :extend t))))
+      (list :bar (if-let* ((color (fdbk--blend accent background 1.0)))
+                     `(:background ,color)
+                   `(:inherit ,bar :inverse-video t))
+            :text (cons base (tint fdbk-thread-tint))
+            :head (cons base (cons 'fdbk-heading
+                                   (tint (and fdbk-thread-tint (min 1.0 (* 2 fdbk-thread-tint))))))
+            :border (rule 0.6)
+            :separator (rule 0.3)))))
+
+(defun fdbk--bar (face)
+  "Return the indented bar in FACE that starts each thread line.
+It is buffer text rather than a `line-prefix', so that the one-pixel
+rules drawn at the start of thread lines stay one pixel high."
+  (concat (fdbk--span "  " 'default)
+          (propertize (fdbk--span " " face) 'display '(space :width 0.3))))
+
+(defun fdbk--rule (pos face)
+  "Draw a one-pixel rule in FACE below the line ending at POS.
+Terminals show it as a blank line.  Do nothing if POS is outside the
+buffer or already has a rule."
+  (unless (or (< pos (point-min)) (>= pos (point-max))
+              (seq-some (lambda (ov) (overlay-get ov 'fdbk-rule)) (overlays-in pos (1+ pos))))
+    (fdbk--overlay pos (1+ pos)
+                   'after-string (propertize (concat (propertize " " 'display '(space :height (1)))
+                                                     (propertize "\n" 'line-height t))
+                                             'face face)
+                   'fdbk-rule t
+                   'evaporate t)))
+
+(defun fdbk--fill (body)
+  "Return the lines of BODY, wrapping long ones to `fdbk-fill-column'.
+Lines in fenced code blocks are left alone."
+  (let (in-code)
+    (mapcan (lambda (line)
+              (let ((fence (string-match-p "\\`[ \t]*\\(```\\|~~~\\)" line)))
+                (prog1 (if (or in-code fence (null fdbk-fill-column)
+                               (<= (string-width line) fdbk-fill-column))
+                           (list line)
+                         (with-temp-buffer
+                           (insert line)
+                           (let ((fill-column fdbk-fill-column)
+                                 (adaptive-fill-mode t)
+                                 (sentence-end-double-space nil))
+                             (fill-region-as-paragraph (point-min) (point-max)))
+                           (split-string (buffer-string) "\n")))
+                  (when fence (setq in-code (not in-code))))))
+            (split-string body "\n"))))
 
 (defun fdbk--format-time (iso)
   "Format the ISO 8601 timestamp ISO for display."
@@ -558,34 +687,61 @@ Magit refreshes the buffer after applying, which renders the review again."
   "Insert THREAD as a section at point.  Prefix the heading with LABEL."
   (let* ((resolved (plist-get thread :resolved))
          (linked (plist-get fdbk--review :github))
-         (text-face (if resolved 'fdbk-resolved 'fdbk-comment-text))
-         (head-face (if resolved 'fdbk-resolved 'fdbk-comment-heading))
-         (status (string-join
-                  (delq nil (list (if resolved "resolved" "unresolved")
-                                  (and (plist-get thread :outdated) "outdated")))
-                  ", ")))
+         (style (fdbk--thread-style thread))
+         (text (plist-get style :text))
+         (head (plist-get style :head))
+         (bar (fdbk--bar (plist-get style :bar)))
+         (wrap (concat bar " "))
+         (body-wrap (concat bar "   "))
+         (beg (point)))
     (magit-insert-section (fdbk-thread-section (plist-get thread :id) resolved)
       (magit-insert-heading
-        (fdbk--line (format "    %sThread %s · %s" (if label (concat label " · ") "")
-                           (plist-get thread :id) status)
-                   'fdbk-heading))
+        (fdbk--line (concat bar " " (if label (concat label " · ") "")
+                            "Thread " (plist-get thread :id) " · "
+                            (if resolved
+                                (fdbk--span "resolved" (cons 'fdbk-status-resolved head))
+                              (fdbk--span "unresolved" (cons 'fdbk-status-unresolved head)))
+                            (if (plist-get thread :outdated)
+                                (concat " · " (fdbk--span "outdated" (cons 'fdbk-label head)))
+                              ""))
+                    head 'wrap-prefix wrap))
       (when (plist-get thread :outdated)
         (let ((lines (plist-get (plist-get thread :anchor) :lines)))
           (when lines
-            (insert (fdbk--line "      Originally on:" text-face))
+            (insert (fdbk--line (concat bar "   Originally on:") text 'wrap-prefix body-wrap))
             (dolist (line lines)
-              (insert (fdbk--line (concat "      │ " line) text-face))))))
-      (dolist (comment (plist-get thread :comments))
-        (let* ((author (plist-get comment :author))
-               (agent (equal (plist-get author :kind) "agent"))
-               (pending (and linked (not (plist-get comment :github)))))
-          (insert (fdbk--line (concat "    " (plist-get author :name)
-                                     (if agent " (agent)" "")
-                                     " · " (fdbk--format-time (plist-get comment :createdAt))
-                                     (if pending " · not on GitHub yet" ""))
-                             head-face 'fdbk-comment (plist-get comment :id)))
-          (dolist (line (split-string (plist-get comment :body) "\n"))
-            (insert (fdbk--line (concat "      " line) text-face 'fdbk-comment (plist-get comment :id)))))))))
+              (insert (fdbk--line (concat bar "   │ " line) text 'wrap-prefix body-wrap))))))
+      (let ((first t))
+        (dolist (comment (plist-get thread :comments))
+          (let* ((author (plist-get comment :author))
+                 (agent (equal (plist-get author :kind) "agent"))
+                 (pending (and linked (not (plist-get comment :github))))
+                 (id (plist-get comment :id)))
+            (unless first
+              (fdbk--rule (1- (point)) (plist-get style :separator)))
+            (setq first nil)
+            (insert (fdbk--line (concat bar " " (fdbk--span (concat (plist-get author :name)
+                                                                (if agent " (agent)" ""))
+                                                        (cons 'fdbk-comment-heading text))
+                                        " · " (fdbk--span (fdbk--format-time (plist-get comment :createdAt))
+                                                          (cons 'fdbk-comment-meta text))
+                                        (if pending
+                                            (concat " · " (fdbk--span "not on GitHub yet"
+                                                                      (cons 'fdbk-label text)))
+                                          ""))
+                                text 'fdbk-comment id 'wrap-prefix wrap))
+            (dolist (line (fdbk--fill (plist-get comment :body)))
+              (insert (fdbk--line (concat bar "   " line) text 'fdbk-comment id
+                                  'wrap-prefix body-wrap)))))))
+    ;; An overlay, so that line highlights such as `hl-line' don't cover the bar.
+    (let ((end (point)))
+      (save-excursion
+        (goto-char beg)
+        (while (< (point) end)
+          (fdbk--overlay (+ (point) 2) (+ (point) 3) 'face (plist-get style :bar) 'priority 10)
+          (forward-line 1))))
+    (fdbk--rule (1- beg) (plist-get style :border))
+    (fdbk--rule (1- (point)) (plist-get style :border))))
 
 (defun fdbk--insert-after-line (pos thread)
   "Insert THREAD after the diff line at POS, inside that line's hunk."
@@ -626,12 +782,24 @@ Magit refreshes the buffer after applying, which renders the review again."
             (insert (fdbk--line "" 'default))))
         (put-text-property beg (point) 'fdbk-rendered t)))))
 
+(when (fboundp 'define-fringe-bitmap)
+  (define-fringe-bitmap 'fdbk-commented-line [#b11110000] nil nil '(center t)))
+
 (defun fdbk--highlight (beg end thread)
-  "Highlight diff lines from BEG to END that THREAD comments on."
-  (let ((ov (make-overlay beg (save-excursion (goto-char end) (min (point-max) (1+ (line-end-position)))))))
-    (overlay-put ov 'face 'fdbk-commented-line)
-    (overlay-put ov 'fdbk-thread (plist-get thread :id))
-    (push ov fdbk--overlays)))
+  "Mark the diff lines from BEG to END that THREAD comments on.
+Each line gets a bar in the left fringe."
+  (fdbk--overlay beg (save-excursion (goto-char end) (min (point-max) (1+ (line-end-position))))
+                 'face 'fdbk-commented-line
+                 'fdbk-thread (plist-get thread :id))
+  (save-excursion
+    (goto-char beg)
+    (while (and (<= (point) end) (not (eobp)))
+      (unless (fdbk--rendered-line-p)
+        (fdbk--overlay (point) (point)
+                       'before-string (propertize " " 'display '(left-fringe fdbk-commented-line
+                                                                             fdbk-thread-bar))
+                       'fdbk-fringe t))
+      (forward-line 1))))
 
 (defun fdbk--inline-position (thread)
   "Return the buffer position of THREAD's last anchored line, or nil."
@@ -645,18 +813,23 @@ Magit refreshes the buffer after applying, which renders the review again."
   "Draw REVIEW into the current buffer."
   (setq fdbk--review review)
   (fdbk--clear-rendered)
-  (let (elsewhere)
+  (let (inline elsewhere)
     (dolist (thread (fdbk--threads))
       (if-let* ((pos (fdbk--inline-position thread)))
-          (let* ((p (plist-get thread :position))
-                 (start (and (plist-get p :startLine)
-                             (fdbk--find-position (plist-get p :path) (plist-get p :side)
-                                                 (plist-get p :startLine)))))
-            (unless (plist-get thread :resolved)
-              (fdbk--highlight (or start pos) pos thread))
-            (fdbk--insert-after-line pos thread))
+          (progn (fdbk--insert-after-line pos thread)
+                 (push thread inline))
         (push thread elsewhere)))
-    (fdbk--insert-summary (nreverse elsewhere)))
+    (fdbk--insert-summary (nreverse elsewhere))
+    ;; Only once every thread is in place, so that no thread is inserted
+    ;; in front of another's fringe marks.
+    (dolist (thread inline)
+      (unless (plist-get thread :resolved)
+        (let* ((p (plist-get thread :position))
+               (pos (fdbk--inline-position thread))
+               (start (and (plist-get p :startLine)
+                           (fdbk--find-position (plist-get p :path) (plist-get p :side)
+                                               (plist-get p :startLine)))))
+          (fdbk--highlight (or start pos) pos thread)))))
   (setq magit-section-highlight-force-update t)
   (fdbk--apply-faces)
   (force-mode-line-update))

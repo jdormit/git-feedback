@@ -321,6 +321,140 @@ hunk, and \"later\" in another hunk.  \"resolved\" is resolved."
     (should-not (assoc "Threads" (funcall imenu-create-index-function)))
     (should-not (local-variable-p 'imenu-auto-rescan))))
 
+(defun fdbk-test--goto-rendered (regexp)
+  "Move to the start of the rendered line matching REGEXP."
+  (goto-char (point-min))
+  (while (progn (re-search-forward regexp)
+                (not (fdbk--rendered-line-p))))
+  (beginning-of-line))
+
+(defun fdbk-test--has-face (face pos)
+  "Return non-nil if the text at POS is drawn with FACE."
+  (memq face (ensure-list (get-text-property pos 'font-lock-face))))
+
+(defun fdbk-test--rule-after-line (pos)
+  "Return non-nil if a rule is drawn after the line ending at POS."
+  (seq-some (lambda (ov) (overlay-get ov 'fdbk-rule))
+            (overlays-in pos (1+ pos))))
+
+(defun fdbk-test--fringe-p ()
+  "Return non-nil if the line at point has a fringe bar."
+  (seq-some (lambda (ov) (overlay-get ov 'fdbk-fringe))
+            (overlays-in (line-beginning-position) (line-beginning-position))))
+
+(ert-deftest fdbk-test-thread-lines-have-status-bar ()
+  (fdbk-test--with-threads
+    (pcase-dolist (`(,body . ,bar) '(("first" . fdbk-thread-bar)
+                                     ("resolved" . fdbk-thread-bar-resolved)))
+      (fdbk-test--goto-rendered (concat "^ +" body "$"))
+      (let ((marker (+ (point) 2)))
+        (should (equal (get-text-property marker 'display) '(space :width 0.3)))
+        (should (memq bar (flatten-tree (get-text-property marker 'font-lock-face)))))
+      (should (get-text-property (point) 'wrap-prefix)))))
+
+(ert-deftest fdbk-test-faces-survive-refontification ()
+  (fdbk-test--with-threads
+    ;; What `font-lock-mode' does, which batch Emacs won't turn on.
+    (setq-local char-property-alias-alist '((face font-lock-face)))
+    (let ((inhibit-read-only t))
+      (font-lock-default-unfontify-region (point-min) (point-max)))
+    (fdbk-test--goto-rendered "^ +first$")
+    (should (memq 'fdbk-thread-bar (flatten-tree (get-char-property (+ (point) 2) 'face))))
+    (should (memq 'fdbk-comment-text (ensure-list (get-char-property (line-end-position) 'face))))))
+
+(ert-deftest fdbk-test-bar-shows-through-hl-line ()
+  (fdbk-test--with-threads
+    (fdbk-test--goto-rendered "^ +first$")
+    (hl-line-mode 1)
+    (hl-line-highlight)
+    (let ((marker (+ (point) 2)))
+      (should (memq 'fdbk-thread-bar (flatten-tree (get-char-property marker 'face)))))))
+
+(ert-deftest fdbk-test-commented-lines-get-a-fringe-bar ()
+  (fdbk-test--with-threads
+    (fdbk-test--goto-line-text "added")
+    (should (fdbk-test--fringe-p))
+    (fdbk-test--goto-line-text "line 9")
+    (should-not (fdbk-test--fringe-p))
+    (fdbk-test--goto-line-text "line 12")
+    (should-not (fdbk-test--fringe-p))))
+
+(ert-deftest fdbk-test-fringe-bars-skip-threads-inside-a-range ()
+  (fdbk-test--with-repo
+    (with-current-buffer (fdbk-test--diff-buffer)
+      (fdbk-start)
+      (fdbk-test--goto-line-text "added")
+      (fdbk-test--comment "inner")
+      (let ((beg (progn (fdbk-test--goto-line-text "line 9") (point)))
+            (end (progn (fdbk-test--goto-line-text "line 11") (line-end-position))))
+        (fdbk-test--compose (lambda () (fdbk-comment beg end)) "outer"))
+      (dolist (text '("line 9" "line 10" "added" "line 11"))
+        (fdbk-test--goto-line-text text)
+        (should (fdbk-test--fringe-p)))
+      (goto-char (point-min))
+      (while (not (eobp))
+        (when (fdbk--rendered-line-p)
+          (should-not (fdbk-test--fringe-p)))
+        (forward-line 1)))))
+
+(ert-deftest fdbk-test-thread-heading-badges ()
+  (fdbk-test--with-threads
+    (fdbk-test--goto-rendered "Thread [0-9a-f]+ · \\(unresolved\\)")
+    (should (fdbk-test--has-face 'fdbk-status-unresolved (match-beginning 1)))
+    (fdbk-test--goto-rendered "Thread [0-9a-f]+ · \\(resolved\\)")
+    (should (fdbk-test--has-face 'fdbk-status-resolved (match-beginning 1)))))
+
+(ert-deftest fdbk-test-threads-are-delimited-by-rules ()
+  (fdbk-test--with-threads
+    (fdbk-test--goto-line-text "added")
+    (should (fdbk-test--rule-after-line (line-end-position)))
+    (fdbk-test--goto-rendered "^ +first$")
+    (let ((section (fdbk--thread-section-at-point)))
+      (should (fdbk-test--rule-after-line (1- (oref section end)))))))
+
+(ert-deftest fdbk-test-long-comment-lines-wrap ()
+  (fdbk-test--with-repo
+    (with-current-buffer (fdbk-test--diff-buffer)
+      (let ((fdbk-fill-column 20)
+            (code "(a very long line of code that must stay intact)"))
+        (fdbk-start)
+        (fdbk-test--goto-line-text "added")
+        (fdbk-test--comment (concat "one two three four five six seven eight\n"
+                                    "- a list item that is long enough to wrap\n"
+                                    "```\n" code "\n```"))
+        (fdbk-test--goto-rendered "^ +one two three")
+        (should (string-match-p "^ +one two three four$" (thing-at-point 'line)))
+        (fdbk-test--goto-rendered "^ +- a list item")
+        (forward-line 1)
+        (should (string-match-p "^ +  is long enough to$" (thing-at-point 'line)))
+        (fdbk-test--goto-rendered (regexp-quote code))
+        (should (string-match-p (concat (regexp-quote code) "$") (thing-at-point 'line)))))))
+
+(ert-deftest fdbk-test-blend ()
+  (should (equal (fdbk--blend "#ffffff" "#000000" 0.25) "#3f3f3f"))
+  (should-not (fdbk--blend "unspecified-fg" "#000000" 0.25))
+  (should-not (fdbk--blend nil "#000000" 0.25)))
+
+(defun fdbk-test--overlays ()
+  "Return the overlays fdbk drew in the current buffer."
+  (seq-filter (lambda (ov) (overlay-get ov 'fdbk)) (overlays-in (point-min) (point-max))))
+
+(ert-deftest fdbk-test-theme-change-redraws ()
+  (fdbk-test--with-threads
+    (let ((before (fdbk-test--overlays)))
+      (run-hook-with-args 'enable-theme-functions 'user)
+      (should (fdbk-test--overlays))
+      (should-not (seq-intersection before (fdbk-test--overlays))))))
+
+(ert-deftest fdbk-test-reopening-the-buffer-does-not-leak-overlays ()
+  (fdbk-test--with-threads
+    (let ((count (length (fdbk-test--overlays))))
+      (should (> count 0))
+      (fdbk-test--diff-buffer)
+      (should-not (fdbk-test--overlays))
+      (fdbk-start)
+      (should (= count (length (fdbk-test--overlays)))))))
+
 (ert-deftest fdbk-test-dispatch-key-wins-over-evil-bindings ()
   (skip-unless (require 'evil nil t))
   (unwind-protect
