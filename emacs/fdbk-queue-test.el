@@ -215,6 +215,71 @@
   (let ((fdbk-queue-repositories nil))
     (should-error (fdbk-queue-refresh) :type 'user-error)))
 
+(ert-deftest fdbk-test-queue-auto-refresh-while-visible ()
+  (let ((fdbk-queue-auto-refresh t)
+        (fdbk-queue-repositories '("/tmp"))
+        (fdbk-queue--timer nil)
+        (refreshes 0))
+    (cl-letf (((symbol-function 'fdbk-queue-refresh) (lambda () (cl-incf refreshes))))
+      (unwind-protect
+          (save-window-excursion
+            (fdbk-test-queue--with-buffer nil
+              (rename-buffer fdbk-queue--buffer-name)
+              (fdbk-queue--start-auto-refresh)
+              (should (timerp fdbk-queue--timer))
+              (fdbk-queue--auto-refresh)
+              (should (= refreshes 0))
+              (switch-to-buffer (current-buffer))
+              (fdbk-queue--auto-refresh)
+              (should (= refreshes 1))
+              (let ((fdbk-queue-auto-refresh nil))
+                (fdbk-queue--auto-refresh))
+              (should-not fdbk-queue--timer)
+              (fdbk-queue--start-auto-refresh))
+            (fdbk-queue--auto-refresh)
+            (should (= refreshes 1))
+            (should-not fdbk-queue--timer))
+        (fdbk-queue--stop-auto-refresh)))))
+
+(ert-deftest fdbk-test-queue-refresh-starts-auto-refresh ()
+  (let ((fdbk-queue-repositories '("/tmp"))
+        (fdbk-queue--refreshing nil)
+        (fdbk-queue--timer nil))
+    (cl-letf (((symbol-function 'fdbk--call-async) #'ignore))
+      (unwind-protect
+          (progn
+            (let ((fdbk-queue-auto-refresh nil)) (fdbk-queue-refresh))
+            (should-not fdbk-queue--timer)
+            (setq fdbk-queue--refreshing nil)
+            (let ((fdbk-queue-auto-refresh t)) (fdbk-queue-refresh))
+            (should (timerp fdbk-queue--timer)))
+        (fdbk-queue--stop-auto-refresh)))))
+
+(ert-deftest fdbk-test-queue-background-render-keeps-window-places ()
+  (save-window-excursion
+    (fdbk-test-queue--with-buffer (list (fdbk-test-queue--pr 1 :requested "you")
+                                        (fdbk-test-queue--pr 2 :requested "you"))
+      (rename-buffer fdbk-queue--buffer-name)
+      (delete-other-windows)
+      (switch-to-buffer (current-buffer))
+      (fdbk-test-queue--goto "PR 2")
+      (let* ((queue-window (selected-window))
+             (second-window (split-window))
+             (start (line-beginning-position 0)))
+        (set-window-start queue-window start)
+        (with-selected-window second-window (fdbk-test-queue--goto "PR 1"))
+        (select-window (split-window))
+        (switch-to-buffer (get-buffer-create "*fdbk-test-other*"))
+        (unwind-protect
+            (progn
+              (fdbk-queue--render-buffer)
+              (should (= (window-start queue-window) start))
+              (pcase-dolist (`(,window ,id) `((,queue-window "github.com/acme/app#2")
+                                              (,second-window "github.com/acme/app#1")))
+                (with-selected-window window
+                  (should (equal (plist-get (fdbk-queue--item-at-point) :id) id)))))
+          (kill-buffer "*fdbk-test-other*"))))))
+
 (ert-deftest fdbk-test-queue-review-agent-work ()
   (fdbk-test--with-repo
     (let ((item (fdbk-test-queue--agent "w1" :dir default-directory)))

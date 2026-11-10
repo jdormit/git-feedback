@@ -13,7 +13,8 @@
 ;; list you can start or resume a git-feedback review of an item, look
 ;; at its diff, open the pull request or jump to the agent's session.
 ;; As in Dired, `d' and `z' flag items to dismiss or snooze and `x'
-;; acts on the flags.  `?' shows every command.
+;; acts on the flags.  `?' shows every command.  Set
+;; `fdbk-queue-auto-refresh' to keep the list fresh while it is visible.
 ;;
 ;; The data comes from `fdbk queue --json'.
 
@@ -64,6 +65,17 @@ Items are ordered by score within their group.  `familiar-file',
   :type 'natnum
   :group 'fdbk)
 
+(defcustom fdbk-queue-auto-refresh nil
+  "Whether to refresh the queue every `fdbk-queue-auto-refresh-interval'.
+It is only refreshed while it is visible."
+  :type 'boolean
+  :group 'fdbk)
+
+(defcustom fdbk-queue-auto-refresh-interval 30
+  "Seconds between automatic refreshes of the queue."
+  :type 'natnum
+  :group 'fdbk)
+
 (defcustom fdbk-queue-hidden-file (locate-user-emacs-file "fdbk-queue-hidden.eld")
   "File remembering items you dismissed or snoozed."
   :type 'file
@@ -94,6 +106,9 @@ Items are ordered by score within their group.  `familiar-file',
 
 (defvar fdbk-queue--refreshing nil
   "Non-nil while a refresh is running.")
+
+(defvar fdbk-queue--timer nil
+  "Timer for `fdbk-queue-auto-refresh'.")
 
 (defvar fdbk-queue--hidden nil
   "Alist of hidden item ids and why they are hidden.
@@ -317,18 +332,31 @@ Leave point on the item with id AT, or the item at point before."
             (magit-insert-heading (format "%s (%d)" title (length items)))
             (mapc #'fdbk-queue--insert-item (fdbk-queue--sort items))
             (insert "\n")))))
-    (goto-char (point-min))
-    (when at
-      (when-let* ((section (seq-find (lambda (s) (and (equal (plist-get (oref s value) :id) at)
-                                                      (not (oref (oref s parent) hidden))))
-                                     (seq-mapcat (lambda (g) (oref g children))
-                                                 (oref magit-root-section children)))))
-        (goto-char (oref section start))))))
+    (fdbk-queue--goto-item at)))
+
+(defun fdbk-queue--goto-item (id)
+  "Move to the visible item with ID, or to the top if there is none."
+  (goto-char (point-min))
+  (when id
+    (when-let* ((section (seq-find (lambda (s) (and (equal (plist-get (oref s value) :id) id)
+                                                    (not (oref (oref s parent) hidden))))
+                                   (seq-mapcat (lambda (g) (oref g children))
+                                               (oref magit-root-section children)))))
+      (goto-char (oref section start)))))
 
 (defun fdbk-queue--render-buffer ()
-  "Redraw the queue buffer, if it exists."
+  "Redraw the queue buffer, if it exists, keeping each window's place."
   (when-let* ((buffer (get-buffer fdbk-queue--buffer-name)))
-    (with-current-buffer buffer (fdbk-queue--render))))
+    (let ((places (mapcar (lambda (window)
+                            (with-selected-window window
+                              (list window (window-start)
+                                    (ignore-errors (plist-get (fdbk-queue--item-at-point) :id)))))
+                          (get-buffer-window-list buffer nil t))))
+      (with-current-buffer buffer (fdbk-queue--render))
+      (pcase-dolist (`(,window ,start ,id) places)
+        (with-selected-window window
+          (fdbk-queue--goto-item id)
+          (set-window-start window start t))))))
 
 ;;; Commands
 
@@ -371,7 +399,28 @@ that are gone unless DATA has warnings, which may mean they are missing."
                    (mapcar #'expand-file-name fdbk-queue-repositories))
            #'fdbk-queue--receive
            #'fdbk-queue--fail)
-        (error (fdbk-queue--fail (error-message-string err)))))))
+        (error (fdbk-queue--fail (error-message-string err))))))
+  (fdbk-queue--start-auto-refresh))
+
+(defun fdbk-queue--auto-refresh ()
+  "Refresh the queue if it is visible, or stop if it is gone or turned off."
+  (if (and fdbk-queue-auto-refresh (get-buffer fdbk-queue--buffer-name))
+      (when (and fdbk-queue-repositories (get-buffer-window fdbk-queue--buffer-name 'visible))
+        (fdbk-queue-refresh))
+    (fdbk-queue--stop-auto-refresh)))
+
+(defun fdbk-queue--start-auto-refresh ()
+  "Start refreshing the queue on a timer if `fdbk-queue-auto-refresh' is set."
+  (when (and fdbk-queue-auto-refresh (not fdbk-queue--timer))
+    (setq fdbk-queue--timer (run-with-timer fdbk-queue-auto-refresh-interval
+                                            fdbk-queue-auto-refresh-interval
+                                            #'fdbk-queue--auto-refresh))))
+
+(defun fdbk-queue--stop-auto-refresh ()
+  "Stop refreshing the queue on a timer."
+  (when fdbk-queue--timer
+    (cancel-timer fdbk-queue--timer)
+    (setq fdbk-queue--timer nil)))
 
 (defun fdbk-queue--start-review (item)
   "Start or resume a review of the agent work ITEM and show it."
