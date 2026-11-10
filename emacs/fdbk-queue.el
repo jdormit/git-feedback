@@ -414,9 +414,10 @@ the background."
   (interactive)
   (magit-status-setup-buffer (plist-get (fdbk-queue--item-at-point) :dir)))
 
-(defun fdbk-queue-agent-session ()
-  "Open the agent session behind the item at point."
-  (interactive)
+(defun fdbk-queue-agent-session (&optional choose)
+  "Open the newest agent session that edited the item at point.
+With a prefix argument, CHOOSE among every session that edited it."
+  (interactive "P")
   (unless (fboundp 'opencode-open-session-by-id)
     (user-error "Opening sessions needs emacs-opencode"))
   (let* ((sessions (or (plist-get (fdbk-queue--item-at-point) :sessions)
@@ -427,9 +428,9 @@ the background."
                                             (if (string-empty-p title) (plist-get s :id) title)))
                                   s))
                           sessions))
-         (session (if (cdr choices)
+         (session (if (and choose (cdr choices))
                       (cdr (assoc (completing-read "Session: " choices nil t) choices))
-                    (cdar choices))))
+                    (car sessions))))
     (opencode-open-session-by-id (plist-get session :id) (plist-get session :directory))))
 
 (defun fdbk-queue--forward-item ()

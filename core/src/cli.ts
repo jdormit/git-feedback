@@ -70,7 +70,7 @@ export interface RunContext {
   /** Overrides the gh-backed client, for tests. */
   github?: GitHubApi
   /** Overrides the OpenCode service, for tests. */
-  sessions?: () => Promise<AgentSession[]>
+  sessions?: (since: string) => Promise<AgentSession[]>
   env?: Record<string, string | undefined>
 }
 
@@ -122,7 +122,7 @@ export async function run(argv: string[], ctx: RunContext): Promise<number> {
     const repos = rest.length ? rest.map((dir) => resolve(cwd, dir)) : [cwd]
     const queue = await buildQueue(
       { repos, days: int(values.days, "days") },
-      { github: api, sessions: ctx.sessions ?? (() => openCodeSessions(env)) },
+      { github: api, sessions: ctx.sessions ?? ((since) => openCodeSessions(since, env)) },
     )
     for (const warning of queue.warnings) ctx.stderr(`warning: ${warning}\n`)
     ctx.stdout(values.json ? JSON.stringify(queue, null, 2) + "\n" : formatQueue(queue))

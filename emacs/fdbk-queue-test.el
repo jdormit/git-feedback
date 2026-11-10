@@ -181,6 +181,22 @@
     (fdbk-queue--render)
     (should (equal fdbk-queue--flags '(("github.com/acme/app#2" . snooze))))))
 
+(ert-deftest fdbk-test-queue-agent-session-opens-the-newest ()
+  (let* ((newest '(:id "ses_new" :title "Newest" :directory "/repo" :updatedAt "2026-11-04T00:00:00Z"))
+         (older '(:id "ses_old" :title "Older" :directory "/repo" :updatedAt "2026-11-03T00:00:00Z"))
+         opened)
+    (fdbk-test-queue--with-buffer (list (fdbk-test-queue--agent "w1" :sessions (list newest older)))
+      (fdbk-test-queue--goto "Agent w1")
+      (cl-letf (((symbol-function 'opencode-open-session-by-id)
+                 (lambda (id directory) (push (list id directory) opened)))
+                ((symbol-function 'completing-read)
+                 (lambda (_prompt choices &rest _)
+                   (car (seq-find (lambda (c) (string-suffix-p "Older" (car c))) choices)))))
+        (fdbk-queue-agent-session)
+        (let ((current-prefix-arg '(4)))
+          (call-interactively #'fdbk-queue-agent-session))))
+    (should (equal opened '(("ses_old" "/repo") ("ses_new" "/repo"))))))
+
 (defun fdbk-test-queue--refresh-error (program)
   "Refresh the queue with PROGRAM as the CLI and return the error shown."
   (let ((fdbk-program program)

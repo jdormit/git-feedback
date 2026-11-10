@@ -52,7 +52,7 @@ Staging and discarding still work while a review is shown, because the inline co
 
 [`emacs/fdbk-queue.el`](emacs/fdbk-queue.el) lists what is waiting for your review, using `fdbk queue --json`:
 
-- **Agent work:** worktrees with changes from a recent OpenCode session that you haven't reviewed, and open reviews whose code changed or where an agent replied to you.
+- **Agent work:** worktrees with changes you haven't reviewed where a recent OpenCode session edited files, and open reviews whose code changed or where an agent replied to you.
 - **Pull requests** by other people, grouped into re-reviews, ones requested from you, ones for your team, and everything else.
 
 Within each group, items are ordered by `fdbk-queue-weights`, and each row lists the signals that put it there, such as "requested from your team · 3 files you changed recently".
@@ -61,7 +61,7 @@ Within each group, items are ordered by `fdbk-queue-weights`, and each row lists
 (setq fdbk-queue-repositories '("~/src/app" "~/src/infra"))
 ```
 
-`M-x fdbk-queue` shows the last results and refreshes in the background. On an item, `RET` starts or resumes a review, `=` shows agent work's diff without one, `o` opens the pull request, `a` jumps to the agent's OpenCode session, and `m` opens Magit. `g` refreshes and `?` shows every command.
+`M-x fdbk-queue` shows the last results and refreshes in the background. On an item, `RET` starts or resumes a review, `=` shows agent work's diff without one, `o` opens the pull request, `a` jumps to the newest OpenCode session that edited it (`C-u a` to choose another), and `m` opens Magit. `g` refreshes and `?` shows every command.
 
 Hiding items works like deleting files in Dired: `d` flags an item to dismiss until its code changes, `z` flags it to snooze for a while, `u` and `U` remove flags, and `x` dismisses and snoozes the flagged items. Hidden items are listed in the Snoozed and Dismissed groups, where `r` brings one back.
 

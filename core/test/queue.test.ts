@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { run } from "../src/cli"
 import type { GitHubApi } from "../src/github"
-import { buildQueue, type AgentSession, type QueueDeps } from "../src/queue"
+import { buildQueue, openCodeSessions, type AgentSession, type QueueDeps } from "../src/queue"
 import { addThread, reply, startReview } from "../src/review"
 import { ReviewStore } from "../src/store"
 import { openRepo } from "../src/git"
@@ -53,6 +53,7 @@ function session(directory: string, overrides: Partial<AgentSession> = {}): Agen
     directory,
     updatedAt: new Date(NOW.getTime() - HOUR).toISOString(),
     running: false,
+    edited: [join(directory, "a.txt")],
     ...overrides,
   }
 }
@@ -133,6 +134,19 @@ test("a worktree with commits from a recent session is unreviewed agent work", a
       sessions: [s],
     }),
   ])
+})
+
+test("a session belongs to the worktrees it edited, not the one it started in", async () => {
+  repo.commit("my own work", { "a.txt": lines(11) })
+  const wt = worktree("feature")
+  commitIn(wt, "a.txt", lines(12))
+  const older = session(repo.dir, { title: "Older", updatedAt: new Date(NOW.getTime() - 2 * HOUR).toISOString(), edited: [join(wt, "b.txt")] })
+  const newer = session(repo.dir, { title: "Newer", edited: [join(wt, "a.txt")] })
+  const question = session(repo.dir, { title: "Just a question", edited: [] })
+
+  const { items } = await buildQueue({ repos: [repo.dir] }, deps([older, question, newer]))
+
+  expect(items).toEqual([expect.objectContaining({ id: `worktree:${wt}`, title: "Newer", sessions: [newer, older] })])
 })
 
 test("uncommitted changes are reviewed against the merge base", async () => {
@@ -289,6 +303,67 @@ test("editing a dirty worktree changes its version even when the line counts sta
   const after = (await buildQueue({ repos: [repo.dir] }, deps([session(wt)]))).items[0]!
 
   expect(after.version).not.toBe(before.version)
+})
+
+test("OpenCode sessions carry the files they and their subagents edited", async () => {
+  const recent = new Date(NOW.getTime() - HOUR).getTime()
+  const old = recent - 30 * 24 * HOUR
+  const tool = (name: string, input: Record<string, unknown>, status = "completed") => ({ type: "tool", name, state: { status, input } })
+  const assistant = (...content: unknown[]) => ({ type: "assistant", content })
+  const sessions = [
+    { id: "root", title: "Root", location: { directory: "/repo" }, time: { updated: recent } },
+    { id: "child", parentID: "root", title: "Sub", location: { directory: "/repo" }, time: { updated: recent } },
+    { id: "grandchild", parentID: "child", title: "Old sub", location: { directory: "/repo" }, time: { updated: old } },
+    { id: "broken", title: "Broken", location: { directory: "/repo" }, time: { updated: recent } },
+    { id: "old", title: "Old", location: { directory: "/repo" }, time: { updated: old } },
+  ]
+  const messages: Record<string, unknown[]> = {
+    root: [
+      assistant(tool("edit", { path: "/wt/a.rb", oldString: "x", newString: "y" }), tool("read", { path: "/repo/b.rb" })),
+      assistant(tool("shell", { command: "touch c.rb", workdir: "/wt2" }), tool("edit", { path: "/wt3/failed.rb" }, "error")),
+      ...Array.from({ length: 200 }, () => ({ type: "user", content: [] })),
+      assistant(tool("write", { path: "relative.rb", content: "" })),
+    ],
+    child: [assistant(tool("edit", { path: "/wt/a.rb" }), tool("write", { path: "/wt/d.rb" }))],
+    grandchild: [assistant(tool("edit", { path: "/wt/e.rb" }))],
+  }
+  const requested: string[] = []
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url)
+      requested.push(url.pathname)
+      if (url.pathname === "/api/session") return Response.json({ data: sessions })
+      if (url.pathname === "/api/session/active") return Response.json({ data: { root: {} } })
+      const id = /^\/api\/session\/([^/]+)\/message$/.exec(url.pathname)![1]!
+      if (id === "broken") return new Response("gone", { status: 404 })
+      const offset = Number(url.searchParams.get("cursor") ?? 0)
+      const limit = Number(url.searchParams.get("limit"))
+      const all = messages[id] ?? []
+      const next = offset + limit < all.length ? String(offset + limit) : undefined
+      return Response.json({ data: all.slice(offset, offset + limit), cursor: { next } })
+    },
+  })
+  mkdirSync(join(scratch, "opencode"))
+  writeFileSync(join(scratch, "opencode", "service.json"), JSON.stringify({ url: server.url.href }))
+
+  try {
+    const result = await openCodeSessions(new Date(NOW.getTime() - 7 * 24 * HOUR).toISOString(), { XDG_STATE_HOME: scratch })
+    expect(result).toEqual([
+      {
+        id: "root",
+        title: "Root",
+        directory: "/repo",
+        updatedAt: new Date(recent).toISOString(),
+        running: true,
+        edited: ["/wt/a.rb", "/repo/relative.rb", "/wt/d.rb", "/wt/e.rb"],
+      },
+      expect.objectContaining({ id: "broken", edited: [] }),
+    ])
+    expect(requested).not.toContain("/api/session/old/message")
+  } finally {
+    server.stop(true)
+  }
 })
 
 test("your pending review does not count as a review", async () => {

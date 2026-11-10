@@ -120,10 +120,11 @@ List what is waiting for your review in each local clone
 .I dir
 (default: the current repository).
 Agent work is a worktree with changes against the default branch where an
-OpenCode session was active in the last
+OpenCode session active in the last
 .I n
-days (default 7), or an open review whose code changed or where an agent
-replied to an unresolved thread.
+days (default 7), or one of its subagents, edited files.
+Open reviews whose code changed or where an agent replied to an unresolved
+thread are agent work too.
 Pull requests are the open, non-draft pull requests by other people, with
 whether your review or your team's is requested, whether you reviewed an
 older commit, and how many of the changed files you committed to in the last

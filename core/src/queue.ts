@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 import { configValue, git, gitTry, openRepo } from "./git"
 import type { GitHubApi } from "./github"
 import { latestRevision } from "./review"
@@ -18,6 +18,8 @@ export interface AgentSession {
   directory: string
   updatedAt: string
   running: boolean
+  /** Files the session and its subagents edited; they decide which worktrees it worked in. */
+  edited: string[]
 }
 
 export interface DiffSize {
@@ -63,6 +65,7 @@ export interface AgentItem {
   updatedAt: string
   state: "unreviewed" | "changed-since-review" | "agent-replied"
   running: boolean
+  /** Newest first. */
   sessions: AgentSession[]
   size: DiffSize
   /** `git diff` arguments to start a review with, run in `dir`. */
@@ -87,7 +90,8 @@ export interface QueueOptions {
 
 export interface QueueDeps {
   github: (host: string) => GitHubApi
-  sessions: () => Promise<AgentSession[]>
+  /** Sessions updated at or after the ISO time SINCE. */
+  sessions: (since: string) => Promise<AgentSession[]>
   now?: Date
 }
 
@@ -105,6 +109,13 @@ function repoInfo(dir: string): RepoInfo {
   if (!match) throw new Error(`${toplevel}: origin is not a GitHub remote`)
   const headRef = gitTry(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { cwd: toplevel })?.trim()
   return { dir: toplevel, host: (match[1] ?? match[2])!, repo: match[3]!, baseRef: headRef || "origin/main" }
+}
+
+/** PATH with symlinks resolved, as far up as it still exists. */
+function realPath(path: string): string {
+  if (existsSync(path)) return realpathSync(path)
+  const parent = dirname(path)
+  return parent === path ? path : join(realPath(parent), basename(path))
 }
 
 function diffSize(cwd: string, args: string[]): DiffSize {
@@ -140,16 +151,17 @@ function worktreeFor(trees: Worktree[], directory: string): Worktree | undefined
 
 function sessionsByWorktree(trees: Worktree[], sessions: AgentSession[]): Map<string, AgentSession[]> {
   const result = new Map<string, AgentSession[]>()
-  for (const s of sessions) {
-    const tree = worktreeFor(trees, s.directory)
-    if (tree) result.set(tree.path, [...(result.get(tree.path) ?? []), s])
+  const newest = [...sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  for (const s of newest) {
+    const touched = new Set(s.edited.map((path) => worktreeFor(trees, path)?.path))
+    for (const tree of touched) if (tree) result.set(tree, [...(result.get(tree) ?? []), s])
   }
   return result
 }
 
+/** SESSIONS must be newest first. */
 function sessionSummary(sessions: AgentSession[]) {
-  const newest = [...sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-  return { latest: newest[0], title: newest.find((s) => s.title)?.title, running: sessions.some((s) => s.running) }
+  return { latest: sessions[0], title: sessions.find((s) => s.title)?.title, running: sessions.some((s) => s.running) }
 }
 
 function unreviewedWorktree(info: RepoInfo, tree: Worktree, sessions: AgentSession[]): AgentItem | null {
@@ -359,13 +371,13 @@ export async function buildQueue(opts: QueueOptions, deps: QueueDeps): Promise<Q
   const cutoff = new Date(now.getTime() - (opts.days ?? 7) * DAY_MS).toISOString()
   const warnings: string[] = []
   const sessions = (
-    await deps.sessions().catch((e: Error) => {
+    await deps.sessions(cutoff).catch((e: Error) => {
       warnings.push(`Could not list agent sessions: ${e.message}`)
       return []
     })
   )
     .filter((s) => s.updatedAt >= cutoff)
-    .map((s) => ({ ...s, directory: existsSync(s.directory) ? realpathSync(s.directory) : s.directory }))
+    .map((s) => ({ ...s, edited: s.edited.map(realPath) }))
 
   const repos = opts.repos.flatMap((dir) => {
     try {
@@ -395,8 +407,14 @@ export async function buildQueue(opts: QueueOptions, deps: QueueDeps): Promise<Q
   return { generatedAt: now.toISOString(), items, warnings }
 }
 
-/** Root sessions from the shared OpenCode service, or none when it is not running. */
-export async function openCodeSessions(env: Record<string, string | undefined> = process.env): Promise<AgentSession[]> {
+const EDIT_TOOLS = new Set(["edit", "write"])
+const MESSAGE_PAGE = 200
+
+/**
+ * Root sessions from the shared OpenCode service updated at or after SINCE, or none when
+ * it is not running. Subagents' edits count as their root session's.
+ */
+export async function openCodeSessions(since: string, env: Record<string, string | undefined> = process.env): Promise<AgentSession[]> {
   const stateHome = env["XDG_STATE_HOME"] || join(homedir(), ".local", "state")
   const file = join(stateHome, "opencode", "service.json")
   if (!existsSync(file)) return []
@@ -404,19 +422,50 @@ export async function openCodeSessions(env: Record<string, string | undefined> =
   const headers: Record<string, string> = service.password
     ? { Authorization: `Basic ${Buffer.from(`opencode:${service.password}`).toString("base64")}` }
     : {}
-  const get = async (path: string) => {
+  const get = async (path: string): Promise<{ data: any; cursor?: { next?: string } }> => {
     const res = await fetch(new URL(path, service.url), { headers, signal: AbortSignal.timeout(5_000) })
     if (!res.ok) throw new Error(`OpenCode ${path} returned ${res.status}`)
-    return ((await res.json()) as { data: any }).data
+    return (await res.json()) as { data: any }
   }
-  const [sessions, active] = await Promise.all([get("/api/session?parentID=null&limit=100000"), get("/api/session/active")])
-  return (sessions as any[])
-    .filter((s) => s.location?.directory)
+  const edits = async (session: any): Promise<string[]> => {
+    const paths: string[] = []
+    let cursor: string | undefined
+    do {
+      const page = await get(`/api/session/${session.id}/message?limit=${MESSAGE_PAGE}${cursor ? `&cursor=${cursor}` : ""}`)
+      for (const message of page.data as any[])
+        for (const part of message.content ?? [])
+          if (
+            part.type === "tool" &&
+            EDIT_TOOLS.has(part.name) &&
+            part.state?.status === "completed" &&
+            typeof part.state.input?.path === "string"
+          )
+            paths.push(resolve(session.location.directory, part.state.input.path))
+      cursor = page.data.length === MESSAGE_PAGE ? page.cursor?.next : undefined
+    } while (cursor)
+    return paths
+  }
+
+  const [{ data: all }, { data: active }] = await Promise.all([get("/api/session?limit=100000"), get("/api/session/active")])
+  const byId = new Map((all as any[]).map((s) => [s.id, s]))
+  const root = (s: any): any => (s.parentID && byId.has(s.parentID) ? root(byId.get(s.parentID)) : s)
+  const isRecent = (s: any) => new Date(s.time.updated).toISOString() >= since
+  const searched = (all as any[]).filter((s) => s.location?.directory && isRecent(root(s)))
+  // A session that can't be read, such as one deleted mid-run, shouldn't hide everyone else's work.
+  const paths = await Promise.all(searched.map((s) => edits(s).catch(() => [])))
+  const edited = new Map<string, Set<string>>()
+  searched.forEach((s, i) => {
+    const id = root(s).id
+    edited.set(id, new Set([...(edited.get(id) ?? []), ...paths[i]!]))
+  })
+  return searched
+    .filter((s) => s === root(s))
     .map((s) => ({
       id: s.id,
       title: s.title ?? "",
       directory: s.location.directory,
       updatedAt: new Date(s.time.updated).toISOString(),
       running: s.id in (active ?? {}),
+      edited: [...(edited.get(s.id) ?? [])],
     }))
 }
